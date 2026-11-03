@@ -78,7 +78,7 @@ describe('translate', () => {
     ])
   })
 
-  it('maps reasoning blocks to thought parts and carries them as-is', () => {
+  it('drops reasoning blocks from history turns on Gemini models to avoid token inflation', () => {
     const messages = [
       { id: 'a', role: 'assistant' as const, content: [
         { type: 'reasoning' as const, text: 'thinking...' },
@@ -88,7 +88,6 @@ describe('translate', () => {
     const body = toAgyRequestBody(generateOptions({ messages }), {})
     const parts = body.request.contents[0]!.parts
     expect(parts).toEqual([
-      { thought: true, text: 'thinking...' },
       { text: 'answer' },
     ])
   })
@@ -428,7 +427,8 @@ describe('translate', () => {
   })
 
   // A model turn whose parts all drop (a thoughts-only turn replayed on the
-  // Claude path) is filtered to null, so the user turns around it fuse into
+  // A model turn whose parts all drop (a thoughts-only turn replayed on either
+  // the Claude or Gemini path) is filtered to null, so the user turns around it fuse into
   // one. A placeholder turn would fabricate model content and a structural
   // empty turn is unmeasured on this channel — pinned as known behavior,
   // not an accident (issue #93).
@@ -439,13 +439,42 @@ describe('translate', () => {
       { id: 'a1', role: 'assistant', content: [{ type: 'reasoning', text: 'a gemini thought' }] },
       { id: 'u3', role: 'user', content: [{ type: 'text', text: 'question two' }] },
     ]
-    const body = toAgyRequestBody(generateOptions({ model: 'claude-opus-4-6-thinking', messages }), {})
-    expect(body.request.contents).toEqual([
+    const claudeBody = toAgyRequestBody(generateOptions({ model: 'claude-opus-4-6-thinking', messages }), {})
+    expect(claudeBody.request.contents).toEqual([
       {
         role: 'user',
         parts: [{ text: 'question one' }, { text: 'Current runtime context. …' }, { text: 'question two' }],
       },
     ])
+
+    const geminiBody = toAgyRequestBody(generateOptions({ model: 'gemini-3.8-flash-tiered', messages }), {})
+    expect(geminiBody.request.contents).toEqual([
+      {
+        role: 'user',
+        parts: [{ text: 'question one' }, { text: 'Current runtime context. …' }, { text: 'question two' }],
+      },
+    ])
+  })
+
+  it('safely handles a thinking-only turn at the end of history or as only turn', () => {
+    const trailingOnly = toAgyRequestBody(generateOptions({
+      model: 'gemini-3.8-flash-tiered',
+      messages: [
+        { id: 'u1', role: 'user', content: [{ type: 'text', text: 'hello' }] },
+        { id: 'a1', role: 'assistant', content: [{ type: 'reasoning', text: 'only thought' }] },
+      ],
+    }), {})
+    expect(trailingOnly.request.contents).toEqual([
+      { role: 'user', parts: [{ text: 'hello' }] },
+    ])
+
+    const soleThinking = toAgyRequestBody(generateOptions({
+      model: 'gemini-3.8-flash-tiered',
+      messages: [
+        { id: 'a1', role: 'assistant', content: [{ type: 'reasoning', text: 'only thought' }] },
+      ],
+    }), {})
+    expect(soleThinking.request.contents).toEqual([])
   })
 
   /**
@@ -481,6 +510,23 @@ describe('translate', () => {
       {},
     )
     expect(body.request.systemInstruction).toEqual({ parts: [{ text: 'from options\n\nfrom history' }] })
+  })
+
+  it('deduplicates identical options.system and system-role message text', () => {
+    const messages = [
+      { id: 's', role: 'system', content: [{ type: 'text', text: 'You are a helpful assistant.' }] },
+      { id: 'u', role: 'user', content: [{ type: 'text', text: 'hello' }] },
+    ]
+    const body = toAgyRequestBody(
+      generateOptions({
+        system: 'You are a helpful assistant.',
+        messages: messages as unknown as GenerateOptions['messages'],
+      }),
+      {},
+    )
+    expect(body.request.systemInstruction).toEqual({
+      parts: [{ text: 'You are a helpful assistant.' }],
+    })
   })
 
   it('skips a developer message: tool bookkeeping is not a conversation turn', () => {
@@ -520,11 +566,9 @@ describe('translate', () => {
     ])
   })
 
-  // A replayed thought cannot be re-signed for the Claude path (the sentinel is
-  // rejected as an invalid signature), so it is dropped there; Gemini accepts
-  // it. Reachable via a mid-session switch from a tiered Gemini model, whose
-  // history carries reasoning blocks.
-  it('drops replayed thought blocks on the Claude path only', () => {
+  // Replayed thoughts from history are dropped for both Claude (cannot be re-signed)
+  // and Gemini (prevents prompt token inflation).
+  it('drops replayed thought blocks on both Claude and Gemini paths', () => {
     const messages = [
       { id: 'a', role: 'user' as const, content: [{ type: 'text' as const, text: 'hi' }] },
       { id: 'b', role: 'assistant' as const, content: [
@@ -538,7 +582,6 @@ describe('translate', () => {
 
     const gemini = toAgyRequestBody(generateOptions({ model: 'gemini-3.8-flash-tiered', messages }), {})
     expect(gemini.request.contents[1]!.parts).toEqual([
-      { thought: true, text: 'a gemini thought' },
       { text: 'answer' },
     ])
   })
@@ -1962,6 +2005,13 @@ describe('models', () => {
     // purpose: 'session-title' disables thinking to protect tight maxTokens budgets
     const titleReq = toAgyRequestBody(generateOptions({ model: 'gemini-3.8-flash-tiered', purpose: 'session-title' as any }), {})
     expect(titleReq.request.generationConfig?.thinkingConfig).toEqual({ thinkingBudget: 0 })
+
+    // purpose: 'session-title' also disables thinking for fixed-thinking models
+    const fixedTitle = toAgyRequestBody(generateOptions({ model: 'gemini-3.6-flash-high', purpose: 'session-title' as any }), {})
+    expect(fixedTitle.request.generationConfig?.thinkingConfig).toEqual({ thinkingBudget: 0 })
+
+    const proAgentTitle = toAgyRequestBody(generateOptions({ model: 'gemini-pro-agent', purpose: 'session-title' as any }), {})
+    expect(proAgentTitle.request.generationConfig?.thinkingConfig).toEqual({ thinkingBudget: 0 })
 
     // reasoningEffort 'none' or 'off' also sets thinkingBudget: 0
     const noneEffort = toAgyRequestBody(generateOptions({ model: 'gemini-3.8-flash-tiered', reasoningEffort: 'none' as any }), {})

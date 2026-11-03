@@ -9,12 +9,11 @@
  * Claude-path requests strip trailing model turns (Vertex rejects "assistant
  * message prefill").
  *
- * Thinking blocks are carried as-is on the Gemini path (Gemini `thought`
- * parts); no thought is ever re-signed — that signature dance was an artifact
- * of the reference plugin's interception architecture (see
- * docs/ARCHITECTURE.md). The Claude path is stricter and drops thought parts
- * entirely, because its validator demands a real thinking signature that only
- * the originating model can produce (docs/ANTIGRAVITY-API.md §3.3).
+ * Replayed thought/reasoning blocks from conversation history are dropped for
+ * both Gemini and Claude paths. On Claude, Vertex strictly rejects replayed
+ * thoughts without a valid originating model signature; on Gemini, replaying
+ * historical thoughts inflates prompt token consumption by thousands of tokens
+ * per turn with no benefit.
  */
 
 import { createHash } from 'node:crypto'
@@ -330,8 +329,8 @@ function blockToParts(
   block: AgyBlockView,
   toolNames: ToolNameIndex,
   images: Map<string, AgyResolvedImage>,
-  /** Claude path: replayed thought blocks are rejected outright (see below). */
-  dropThoughts = false,
+  /** Replayed thought blocks are dropped by default to prevent token inflation and signature rejections. */
+  dropThoughts = true,
 ): AgyPart[] {
   switch (block.type) {
     case 'text':
@@ -345,14 +344,10 @@ function blockToParts(
       // Empty thought: same rejection class as `text` ("thinking.thinking:
       // Field required").
       if (block.text === '') return []
-      // A replayed thought block cannot be sent to the Claude path at all: the
-      // backend demands a thinking `signature`, and the
-      // `skip_thought_signature_validator` sentinel that works for functionCall
-      // parts is rejected here as an invalid signature (live-verified). Only
-      // the model that produced the thought could re-sign it, so a thought that
-      // came from another family (e.g. a mid-session switch from a Gemini
-      // tiered model) has no valid form — drop it rather than 400. Gemini
-      // accepts replayed thoughts, so this is Claude-only.
+      // Replayed thought blocks from conversation history are dropped for both
+      // Claude and Gemini paths: on Claude, the backend demands a thinking signature
+      // that cannot be synthesized; on Gemini, replaying thoughts as prompt input
+      // needlessly consumes thousands of tokens every subsequent turn.
       if (dropThoughts) return []
       return [{ thought: true, text: block.text }]
     case 'tool-call': {
@@ -419,7 +414,7 @@ function messageToContent(
   images: Map<string, AgyResolvedImage>,
   multimodalFiles?: Map<string, AgyResolvedMultimodalFile[]>,
   messageIndex?: number,
-  dropThoughts = false,
+  dropThoughts = true,
 ): AgyContent | null {
   // 0.2.0 promotes a tool result to a `tool`-ROLE message, with the correlation
   // (`toolCallId`/`isError`) on the message instead of on a `tool-result` block.
@@ -529,6 +524,20 @@ const AGY_BUILTIN_TOOL_NAMES = new Set(['google_search', 'web_search', 'search_w
 
 /** Level-thinking: single id + selectable low/medium/high via thinkingLevel (catalog thinking:'level'). */
 const LEVEL_THINKING_LEVELS = new Set(['low', 'medium', 'high'])
+
+/**
+ * Fixed-thinking (id-bound) reasoning models, e.g. gemini-3.6-flash-high,
+ * gemini-pro-agent, gemini-2.5-flash-thinking.
+ *
+ * Excludes Claude models (handled separately) and level-thinking models.
+ */
+export function isFixedThinkingModel(modelId: string): boolean {
+  if (isClaudeModel(modelId)) return false
+  if (isLevelThinkingModel(modelId)) return false
+  const cat = catalogModel(modelId)
+  if (cat?.supportsReasoning) return true
+  return typeof modelId === 'string' && /-(?:high|medium|low|thinking|agent)$/.test(modelId)
+}
 
 /**
  * Claude-family output ceiling on the Antigravity channel (live-measured).
@@ -646,7 +655,7 @@ export function toAgyRequestBody(
   const claude = isClaudeModel(options.model)
   let contents = coalesceContents(
     conversationMessages(messages)
-      .map((message, index) => messageToContent(message, toolNames, images, multimodalFiles, index, claude))
+      .map((message, index) => messageToContent(message, toolNames, images, multimodalFiles, index, true))
       .filter((c): c is AgyContent => c !== null),
   )
   if (claude) {
@@ -658,9 +667,18 @@ export function toAgyRequestBody(
   // (documented identically on both supported dsh-llm lines). Both sources feed
   // the system slot; routing the message through `contents` instead would put
   // the system prompt on the wire as a USER turn.
-  const systemText = [options.system, systemTextFromMessages(messages)]
-    .filter((text): text is string => typeof text === 'string' && text !== '')
-    .join('\n\n')
+  // Deduplicate identical system instructions between options.system and messages
+  // so identical system prompts are not doubled.
+  const fromMessages = systemTextFromMessages(messages)
+  const systemText = (() => {
+    const opt = typeof options.system === 'string' && options.system.trim() !== '' ? options.system : undefined
+    const msg = typeof fromMessages === 'string' && fromMessages.trim() !== '' ? fromMessages : undefined
+    if (opt && msg) {
+      if (opt.trim() === msg.trim()) return opt
+      return `${opt}\n\n${msg}`
+    }
+    return opt ?? msg ?? ''
+  })()
 
   const tools = toolsToDeclarations(options.tools)
   const generationConfig: NonNullable<AgyRequestBody['request']['generationConfig']> = {}
@@ -701,6 +719,8 @@ export function toAgyRequestBody(
         ? { thinkingLevel: effort, includeThoughts: true }
         : { thinkingBudget: configured, includeThoughts: true }
     }
+  } else if (isFixedThinkingModel(options.model) && options.purpose === 'session-title') {
+    generationConfig.thinkingConfig = { thinkingBudget: 0 }
   } else if (claude && options.purpose !== 'session-title') {
     // Claude thinking models are id-bound (no level selector), so their budget is
     // a single configured value rather than one per level. Measured constraints,
