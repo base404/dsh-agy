@@ -12,6 +12,7 @@ import { AgyAdapter } from './adapter/adapter.ts'
 import type { AgyAttachmentStore } from './adapter/adapter.ts'
 import { AGY_PROVIDER } from './adapter/models.ts'
 import { ModelVisibility } from './model-visibility.ts'
+import { UiPrefsStore } from './ui-prefs.ts'
 import { ModelRoutingStore } from './model-routing.ts'
 import { MultimodalConfigStore } from './multimodal-config.ts'
 import { ThinkingBudgetStore } from './thinking-budget.ts'
@@ -101,6 +102,7 @@ export interface AgyRuntime {
   thinkingBudget: ThinkingBudgetStore
   multimodalConfig: MultimodalConfigStore
   modelRouting: ModelRoutingStore
+  uiPrefs: UiPrefsStore
 }
 
 /**
@@ -182,6 +184,7 @@ async function buildAgyRuntime(ctx: Context): Promise<AgyRuntime> {
   const thinkingBudget = new ThinkingBudgetStore()
   const multimodalConfig = new MultimodalConfigStore()
   const modelRouting = new ModelRoutingStore()
+  const uiPrefs = new UiPrefsStore()
   // The adapter's model-list cache is keyed to no account (see
   // `AgyAdapter.invalidateModelCache`), so every event that can switch the
   // account discovery rides must drop it. The adapter does not exist yet when
@@ -191,6 +194,7 @@ async function buildAgyRuntime(ctx: Context): Promise<AgyRuntime> {
     store,
     recordUsage: (record) => { stats.record(record) },
     onRotate: () => { invalidateModelCache() },
+    autoRotate: () => uiPrefs.get().autoRotateAccounts,
   })
   // Optional background health probe (DSH_AGY_HEALTH_INTERVAL_MS), off by default.
   const healthIntervalMs = Number(process.env.DSH_AGY_HEALTH_INTERVAL_MS ?? 0)
@@ -230,7 +234,7 @@ async function buildAgyRuntime(ctx: Context): Promise<AgyRuntime> {
     stats.flushSync()
     recentStore.flushSync()
   })
-  return { store, sessions, adapter, stats, recentStore, modelVisibility, thinkingBudget, multimodalConfig, modelRouting }
+  return { store, sessions, adapter, stats, recentStore, modelVisibility, thinkingBudget, multimodalConfig, modelRouting, uiPrefs }
 }
 
 export { AGY_PROVIDER }

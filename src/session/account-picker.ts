@@ -32,6 +32,7 @@ export interface AccountPickerDeps {
   inFlight: InFlightTracker
   store: AccountStore
   accountKey: (account: ManagedAccount) => string
+  autoRotate?: () => boolean
 }
 
 /**
@@ -101,6 +102,52 @@ export async function pickAccount(
 
   const family = modelFamilyOf(model)
   const familyKey = familyKeyOf(model)
+  const autoRotate = deps.autoRotate?.() ?? true
+
+  if (!autoRotate) {
+    if (storage.accounts.length === 0) return undefined
+    const activeIndex = storage.activeIndex >= 0 && storage.activeIndex < storage.accounts.length
+      ? storage.activeIndex
+      : 0
+    const active = storage.accounts[activeIndex]
+    if (!active) {
+      throw new AgyAuthError('invalid-credential', 'No active account is configured.')
+    }
+    const pinnedKey = deps.affinity.affinityFor(conversationKey, now)
+    if (pinnedKey !== null && pinnedKey !== deps.accountKey(active)) {
+      deps.affinity.clearAffinityForConversation(conversationKey)
+    }
+    if (active.enabled === false) {
+      throw new AgyAuthError('invalid-credential', `Active account "${active.email ?? active.id}" is disabled — enable it or select another account.`)
+    }
+    if (!isModelSupportedByAccount(active, model)) {
+      throw new AgyAuthError('invalid-credential', `Model "${model}" is not available on active account "${active.email ?? active.id}" — switch account or pick another model.`)
+    }
+    if (isCoolingDown(active, now) || isFamilyQuotaExhausted(active, family, now)) {
+      const recovery = computeAccountRecoveryTime(active, now)
+      const blockedUntil = active.coolingDownUntil ?? recovery ?? (now + FULL_QUOTA_COOLDOWN_MS)
+      const isExhausted = active.cooldownReason === 'quota-exhausted' || isFamilyQuotaExhausted(active, family, now)
+      if (isExhausted && areAllModelGroupsExhausted(active, undefined, now) && !isCoolingDown(active, now) && !((active.manuallyRecoveredAt ?? 0) >= now)) {
+        active.coolingDownUntil = blockedUntil
+        active.cooldownReason = 'quota-exhausted'
+        active.cooldownSetAt = now
+        await deps.store.mutate((st) => {
+          const act = st.accounts[activeIndex]
+          if (act) {
+            act.coolingDownUntil = blockedUntil
+            act.cooldownReason = 'quota-exhausted'
+            act.cooldownSetAt = now
+          }
+        }).catch(() => {})
+      }
+      throw new AgyPoolBlockedError(isExhausted ? 'quota-exhausted' : 'retryable', blockedUntil)
+    }
+    if (isFamilyRateLimited(active, familyKey, now)) {
+      const blockedUntil = active.rateLimitResetTimes?.[familyKey] ?? active.coolingDownUntil ?? (now + 60_000)
+      throw new AgyPoolBlockedError('retryable', blockedUntil)
+    }
+    return { account: active, index: activeIndex }
+  }
   // Conversation affinity: reuse the account this conversation is already
   // pinned to while it is fresh and healthy, so one conversation stays on one
   // account. A quota-exhausted family or a cooldown breaks the pin and
@@ -185,6 +232,19 @@ export async function pickAccount(
     const retryable = ranked.filter((candidate) => !quotaExhausted(candidate.account))
     const blocked = retryable.length > 0 ? retryable : ranked
     const blockedUntil = Math.min(...blocked.map((candidate) => candidate.blockedUntil ?? now))
+    if (retryable.length === 0) {
+      await deps.store.mutate((st) => {
+        for (const candidate of ranked) {
+          const acc = st.accounts[candidate.index]
+          if (acc && areAllModelGroupsExhausted(acc, undefined, now) && !isCoolingDown(acc, now) && !((acc.manuallyRecoveredAt ?? 0) >= now)) {
+            const recovery = computeAccountRecoveryTime(acc, now) ?? (now + FULL_QUOTA_COOLDOWN_MS)
+            acc.coolingDownUntil = recovery
+            acc.cooldownReason = 'quota-exhausted'
+            acc.cooldownSetAt = now
+          }
+        }
+      }).catch(() => {})
+    }
     throw new AgyPoolBlockedError(retryable.length > 0 ? 'retryable' : 'quota-exhausted', blockedUntil)
   }
   if (picked.index !== storage.activeIndex) {

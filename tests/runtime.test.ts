@@ -1526,3 +1526,56 @@ describe('quota family mapping (#58 label branches)', () => {
     expect(twoGroups.google?.remainingFraction).toBe(0.1)
   })
 })
+
+describe('computeAccountRecoveryTime', () => {
+  it('considers weekly reset when weekly is 0% even if 5h has 100% quota', () => {
+    const now = Date.now()
+    const fiveHourReset = now + 5 * 3600_000
+    const weeklyReset = now + 4 * 86400_000
+    const acc = account()
+    acc.cachedLimits = {
+      groups: [
+        {
+          name: 'Gemini Models',
+          windows: [
+            { bucketId: 'gemini-5h', window: '5h', remainingFraction: 1, resetTime: new Date(fiveHourReset).toISOString() },
+            { bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: 0, resetTime: new Date(weeklyReset).toISOString() },
+          ],
+        },
+      ],
+      updatedAt: now,
+    }
+
+    const recovery = computeAccountRecoveryTime(acc, now)
+    expect(recovery).toBe(weeklyReset)
+  })
+
+  it('picks the earliest available model recovery time across exhausted groups', () => {
+    const now = Date.now()
+    const geminiWeeklyReset = now + 4 * 86400_000 // 4 days
+    const claudeWeeklyReset = now + 2 * 86400_000 // 2 days
+    const acc = account()
+    acc.cachedLimits = {
+      groups: [
+        {
+          name: 'Gemini Models',
+          windows: [
+            { bucketId: 'gemini-5h', window: '5h', remainingFraction: 1, resetTime: new Date(now + 3600_000).toISOString() },
+            { bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: 0, resetTime: new Date(geminiWeeklyReset).toISOString() },
+          ],
+        },
+        {
+          name: 'Claude and GPT models',
+          windows: [
+            { bucketId: '3p-5h', window: '5h', remainingFraction: 1, resetTime: new Date(now + 3600_000).toISOString() },
+            { bucketId: '3p-weekly', window: 'weekly', remainingFraction: 0, resetTime: new Date(claudeWeeklyReset).toISOString() },
+          ],
+        },
+      ],
+      updatedAt: now,
+    }
+
+    const recovery = computeAccountRecoveryTime(acc, now)
+    expect(recovery).toBe(claudeWeeklyReset)
+  })
+})

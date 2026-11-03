@@ -322,7 +322,7 @@ describe('AgySessionManager', () => {
     await expect(sessions.recoverAccount(99)).rejects.toThrow(/account not found/)
   })
 
-  it('sets coolingDownUntil to earliest recovery time when switching to an account whose model groups are exhausted', async () => {
+  it('keeps cooldown lifted and does not re-cool on activateAccount', async () => {
     stubTokenEndpoint()
     const now = Date.now()
     const earliestReset = now + 2 * 3600_000 // 2 hours
@@ -330,20 +330,22 @@ describe('AgySessionManager', () => {
 
     const acc0 = account('active@x')
     const acc1 = account('exhausted@x')
+    acc1.coolingDownUntil = earliestReset
+    acc1.cooldownReason = 'quota-exhausted'
     acc1.cachedLimits = {
       groups: [
         {
           name: 'Gemini Models',
           windows: [
-            { bucketId: 'gemini-5h', window: '5h', remainingFraction: 0, resetTime: new Date(earliestReset).toISOString() },
-            { bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: 0.2, resetTime: new Date(laterReset).toISOString() },
+            { bucketId: 'gemini-5h', window: '5h', remainingFraction: 1, resetTime: new Date(earliestReset).toISOString() },
+            { bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: 0, resetTime: new Date(laterReset).toISOString() },
           ],
         },
         {
           name: 'Claude and GPT models',
           windows: [
-            { bucketId: '3p-5h', window: '5h', remainingFraction: 0, resetTime: new Date(laterReset).toISOString() },
-            { bucketId: '3p-weekly', window: 'weekly', remainingFraction: 0, resetTime: new Date(laterReset).toISOString() },
+            { bucketId: '3p-5h', window: '5h', remainingFraction: 1, resetTime: new Date(earliestReset).toISOString() },
+            { bucketId: '3p-weekly', window: 'weekly', remainingFraction: 0, resetTime: new Date(earliestReset).toISOString() },
           ],
         },
       ],
@@ -353,17 +355,9 @@ describe('AgySessionManager', () => {
     const store = new InMemoryAccountStore(storage([acc0, acc1], 0))
     const sessions = new AgySessionManager({ store })
 
-    // Switch to account 1 (exhausted): should switch to it and set cooldown to earliest recovery time
-    await sessions.activateAccount(1)
-    let state = await store.load()
-    expect(state.activeIndex).toBe(1)
-    expect(state.accounts[1]!.coolingDownUntil).toBeGreaterThanOrEqual(earliestReset - 1000)
-    expect(state.accounts[1]!.coolingDownUntil).toBeLessThanOrEqual(earliestReset + 1000)
-    expect(state.accounts[1]!.cooldownReason).toBe('quota-exhausted')
-
     // Lifting cooldown: cooldown should be cleared and stay lifted
     await sessions.recoverAccount(1)
-    state = await store.load()
+    let state = await store.load()
     expect(state.accounts[1]!.coolingDownUntil).toBeUndefined()
     expect(state.accounts[1]!.cooldownReason).toBeUndefined()
 
@@ -372,11 +366,12 @@ describe('AgySessionManager', () => {
     state = await store.load()
     expect(state.accounts[1]!.coolingDownUntil).toBeUndefined()
 
-    // Switching to account 1 again should re-cool it to the earliest recovery time
+    // Activating account 1 should NOT automatically re-cool it
     await sessions.activateAccount(1)
     state = await store.load()
-    expect(state.accounts[1]!.coolingDownUntil).toBeGreaterThanOrEqual(earliestReset - 1000)
-    expect(state.accounts[1]!.cooldownReason).toBe('quota-exhausted')
+    expect(state.activeIndex).toBe(1)
+    expect(state.accounts[1]!.coolingDownUntil).toBeUndefined()
+    expect(state.accounts[1]!.cooldownReason).toBeUndefined()
   })
 
   it('rotates active index on 429 quota_exhausted', async () => {
@@ -1949,4 +1944,94 @@ describe('fingerprint version freshness', () => {
       expect(isModelSupportedByAccount(unprobed, 'claude-3-7-sonnet')).toBe(true)
     })
   })
-})
+  describe('autoRotate configuration toggle', () => {
+    it('blocks request when autoRotate is false and active account is quota-exhausted, without rotating', async () => {
+      stubTokenEndpoint()
+      const acc0 = account('active-exhausted@x.com')
+      acc0.cachedLimits = {
+        updatedAt: Date.now(),
+        groups: [{
+          name: 'Gemini Models',
+          windows: [{
+            bucketId: 'gemini-weekly',
+            window: 'weekly',
+            remainingFraction: 0,
+            resetTime: new Date(Date.now() + 3600_000 * 24).toISOString(),
+          }],
+        }],
+      }
+      const acc1 = account('spare-healthy@x.com')
+      acc1.cachedLimits = {
+        updatedAt: Date.now(),
+        groups: [{
+          name: 'Gemini Models',
+          windows: [{
+            bucketId: 'gemini-weekly',
+            window: 'weekly',
+            remainingFraction: 1,
+            resetTime: new Date(Date.now() + 3600_000 * 24).toISOString(),
+          }],
+        }],
+      }
+      const store = new InMemoryAccountStore(storage([acc0, acc1], 0))
+      const sessions = new AgySessionManager({ store, autoRotate: () => false })
+
+      await expect(sessions.getSession('gemini-3-flash')).rejects.toMatchObject({
+        name: 'AgyPoolBlockedError',
+        kind: 'quota-exhausted',
+      })
+      expect((await store.load()).activeIndex).toBe(0)
+    })
+
+    it('rotates to usable candidate when autoRotate is true', async () => {
+      stubTokenEndpoint()
+      const acc0 = account('active-exhausted@x.com')
+      acc0.cachedLimits = {
+        updatedAt: Date.now(),
+        groups: [{
+          name: 'Gemini Models',
+          windows: [{
+            bucketId: 'gemini-weekly',
+            window: 'weekly',
+            remainingFraction: 0,
+            resetTime: new Date(Date.now() + 3600_000 * 24).toISOString(),
+          }],
+        }],
+      }
+      const acc1 = account('spare-healthy@x.com')
+      acc1.cachedLimits = {
+        updatedAt: Date.now(),
+        groups: [{
+          name: 'Gemini Models',
+          windows: [{
+            bucketId: 'gemini-weekly',
+            window: 'weekly',
+            remainingFraction: 1,
+            resetTime: new Date(Date.now() + 3600_000 * 24).toISOString(),
+          }],
+        }],
+      }
+      const store = new InMemoryAccountStore(storage([acc0, acc1], 0))
+      const sessions = new AgySessionManager({ store, autoRotate: () => true })
+
+      const session = await sessions.getSession('gemini-3-flash')
+      expect(session!.index).toBe(1)
+      expect((await store.load()).activeIndex).toBe(1)
+    })
+
+    it('does not rotate activeIndex on reportFailure when autoRotate is false', async () => {
+      const acc0 = account('a@x.com')
+      const acc1 = account('b@x.com')
+      const store = new InMemoryAccountStore(storage([acc0, acc1], 0))
+      const sessions = new AgySessionManager({ store, autoRotate: () => false })
+
+      await sessions.reportFailure('rate-limit', {
+        account: acc0,
+        index: 0,
+        generation: 0,
+      } as any, { retryAfterMs: 60000, model: 'gemini-3-flash' })
+
+      expect((await store.load()).activeIndex).toBe(0)
+    })
+  })
+});

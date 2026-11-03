@@ -16,6 +16,10 @@ export interface SessionManagerOptions {
    * chat path (verification, test calls, CLI invocations).
    */
   recordUsage?: (record: UsageRecord) => void
+  /**
+   * Whether to automatically rotate accounts on exhaustion / cooling.
+   */
+  autoRotate?: () => boolean
 }
 
 /** A usage record emitted by the session manager's non-chat call paths. */

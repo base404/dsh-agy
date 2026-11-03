@@ -18,6 +18,7 @@ import {
   useDismissOnOutsidePointer,
 } from '@deepseek-ai/dsh-client-ui-primitives'
 import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
+import { canActivateAccount } from './accounts-tab.ts'
 import { h } from './element.ts'
 import { aliasVar, installAgyStyles } from './styles.ts'
 import {
@@ -144,7 +145,7 @@ export function buildAccountSelectOptions(
       suffix = ` (${t('stateVerificationRequired')})`
     }
     const isCurrent = candidate.index === activeAccountIndex
-    const isSelectable = candidate.state === 'active'
+    const isSelectable = candidate.state === 'active' || candidate.state === 'cooling'
     return {
       index: candidate.index,
       label: `${baseEmail}${suffix}`,
@@ -231,6 +232,7 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
   const [now, setNow] = useState(() => Date.now())
   const [detailedReset, setDetailedReset] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [viewIndex, setViewIndex] = useState<number | null>(null)
 
   const rootRef = useRef<HTMLSpanElement | null>(null)
   const panelRef = useRef<HTMLDivElement | null>(null)
@@ -488,11 +490,24 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
         setPause(null)
         void load(false, true)
       }
-      if (isIdlePausedRef.current && smartModeRef.current && refreshMinutes !== null && document.visibilityState !== 'hidden') {
+      if (document.visibilityState !== 'hidden') {
         void rpc.call('pool.status', {}).then((status) => {
+          const nextActive = status.activeIndex
+        if (nextActive !== undefined) {
+          setAccounts((current) => {
+            const currentActive = current.find((a) => a.active)?.index
+            if (currentActive !== undefined && currentActive !== nextActive) {
+              setViewIndex(nextActive)
+                void load(true, false, status.activeIndex)
+                window.dispatchEvent(new CustomEvent('agy:account-changed', { detail: { index: status.activeIndex } }))
+                return current.map((a) => ({ ...a, active: a.index === status.activeIndex }))
+              }
+              return current
+            })
+          }
           if (status.lastModelUsedAt) {
             lastModelUsedRef.current = status.lastModelUsedAt
-            if (!isSmartModeIdle(status.lastModelUsedAt, Date.now())) {
+            if (isIdlePausedRef.current && smartModeRef.current && refreshMinutes !== null && !isSmartModeIdle(status.lastModelUsedAt, Date.now())) {
               isIdlePausedRef.current = false
               setIsIdlePaused(false)
               void load(false, true)
@@ -582,6 +597,7 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
       await rpc.call('account.activate', { index: targetIndex })
       const listed = await rpc.call('account.list', {})
       setAccounts(listed.accounts)
+      setViewIndex(targetIndex)
       announceAccountChanged(targetIndex)
       await load(true, false, targetIndex)
     } catch {
@@ -619,8 +635,9 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
           if (currentActive === targetIndex) return current
           return current.map((a) => ({ ...a, active: a.index === targetIndex }))
         })
+        setViewIndex(targetIndex)
       }
-      void load(false, false, detail.index)
+      void load(true, false, detail.index)
     }
     window.addEventListener('agy:account-changed', onAccountChanged)
     return () => { window.removeEventListener('agy:account-changed', onAccountChanged) }
@@ -648,6 +665,20 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
         setIsPinned(false)
         return false
       }
+      void rpc.call('pool.status', {}).then((status) => {
+        const nextActive = status.activeIndex
+        if (nextActive !== undefined) {
+          setAccounts((current) => {
+            const currentActive = current.find((a) => a.active)?.index
+            if (currentActive !== undefined && currentActive !== nextActive) {
+              setViewIndex(nextActive)
+              void load(true, false, status.activeIndex)
+              return current.map((a) => ({ ...a, active: a.index === status.activeIndex }))
+            }
+            return current
+          })
+        }
+      }).catch(() => {})
       return true
     })
   }
@@ -662,15 +693,18 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
     setIsPinned(false)
   }
 
+  const currentViewIndex = viewIndex !== null && accounts.some((a) => a.index === viewIndex)
+    ? viewIndex
+    : activeIndex
   const accountCount = accounts.length
   const rawDot = dotStateFor(accounts)
   const dotState = rawDot === 'done' ? 'active' : rawDot === 'warning' ? 'cooling' : 'disabled'
-  const viewAccount = activeAccount
+  const viewAccount = accounts.find((candidate) => candidate.index === currentViewIndex) ?? activeAccount
 
   const handleRefreshClick = async (e: { stopPropagation: () => void }) => {
     e.stopPropagation()
     if (loading || isUpdating) return
-    const currentTarget = activeAccount?.index ?? activeIndex
+    const currentTarget = viewAccount?.index ?? activeIndex
     if (currentTarget === undefined || currentTarget === null) return
     await load(true, false, currentTarget)
   }
@@ -774,7 +808,7 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
     }
   }
 
-  const selectOptions = buildAccountSelectOptions(accounts, activeIndex, t, now)
+  const selectOptions = buildAccountSelectOptions(accounts, currentViewIndex, t, now)
 
   const rawCards = buildQuotaCards(viewAccount, t, now, detailedReset)
   // Each card is an upstream group (e.g. Gemini, Claude+GPT). The 5h bar turns
@@ -920,28 +954,47 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
           'div',
           { className: 'agy-ui-account-card' },
           h(
-            'select',
-            {
-              className: 'agy-ui-account-select',
-              value: String(activeIndex ?? ''),
-              disabled: isUpdating || loading,
-              title: t('badgeAccountView'),
-              'aria-label': t('badgeAccountView'),
-              onChange: (event: { target: { value: string } }) => {
-                const val = Number(event.target.value)
-                if (!Number.isNaN(val)) {
-                  void handleActivateAccount(val)
-                }
-              },
-            },
-            selectOptions.map((opt) =>
-              h('option',
-                {
-                  key: opt.index,
-                  value: String(opt.index),
-                  disabled: opt.disabled,
+            'div',
+            { className: 'agy-ui-account-card-row' },
+            h(
+              'select',
+              {
+                className: 'agy-ui-account-select',
+                value: String(currentViewIndex ?? ''),
+                disabled: isUpdating || loading,
+                title: t('badgeAccountView'),
+                'aria-label': t('badgeAccountView'),
+                onChange: (event: { target: { value: string } }) => {
+                  const val = Number(event.target.value)
+                  if (!Number.isNaN(val)) {
+                    setViewIndex(val)
+                    void load(true, false, val)
+                  }
                 },
-                opt.label)),
+              },
+              selectOptions.map((opt) =>
+                h('option',
+                  {
+                    key: opt.index,
+                    value: String(opt.index),
+                    disabled: opt.disabled,
+                  },
+                  opt.label)),
+            ),
+            canActivateAccount(viewAccount) && viewAccount.index !== activeIndex
+              ? h(
+                Button,
+                {
+                  variant: 'outline',
+                  size: 'sm',
+                  disabled: isUpdating || loading,
+                  onClick: () => {
+                    void handleActivateAccount(viewAccount.index)
+                  },
+                },
+                t('actionActivate'),
+              )
+              : null,
           ),
           h(
             'div',

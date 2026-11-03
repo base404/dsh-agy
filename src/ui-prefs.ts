@@ -15,6 +15,7 @@ import {
   DEFAULT_BADGE_MODEL_GROUP,
   DEFAULT_BADGE_SKIP_ZERO_WEEKLY,
   DEFAULT_BADGE_WINDOW_TYPE,
+  DEFAULT_AUTO_ROTATE_ACCOUNTS,
   DEFAULT_SMART_MODE,
   quotaRefreshMinutesView,
   sanitizeQuotaRefreshMinutes,
@@ -56,6 +57,9 @@ export function sanitizeUiPrefs(raw: unknown): UiPrefsDocument {
   if (typeof obj.smartMode === 'boolean') {
     doc.smartMode = obj.smartMode
   }
+  if (typeof obj.autoRotateAccounts === 'boolean') {
+    doc.autoRotateAccounts = obj.autoRotateAccounts
+  }
   return doc
 }
 
@@ -92,6 +96,7 @@ export class UiPrefsStore {
       badgeWindowType: this.doc.badgeWindowType ?? DEFAULT_BADGE_WINDOW_TYPE,
       badgeSkipZeroWeekly: this.doc.badgeSkipZeroWeekly ?? DEFAULT_BADGE_SKIP_ZERO_WEEKLY,
       smartMode: this.doc.smartMode ?? DEFAULT_SMART_MODE,
+      autoRotateAccounts: this.doc.autoRotateAccounts ?? DEFAULT_AUTO_ROTATE_ACCOUNTS,
     }
   }
 
@@ -107,6 +112,7 @@ export class UiPrefsStore {
       ...(this.doc.badgeWindowType !== undefined ? { badgeWindowType: this.doc.badgeWindowType } : {}),
       ...(this.doc.badgeSkipZeroWeekly !== undefined ? { badgeSkipZeroWeekly: this.doc.badgeSkipZeroWeekly } : {}),
       ...(this.doc.smartMode !== undefined ? { smartMode: this.doc.smartMode } : {}),
+      ...(this.doc.autoRotateAccounts !== undefined ? { autoRotateAccounts: this.doc.autoRotateAccounts } : {}),
     }
     if (typeof prefs.conversationBadge === 'boolean') {
       next.conversationBadge = prefs.conversationBadge
@@ -132,6 +138,9 @@ export class UiPrefsStore {
     }
     if (typeof prefs.smartMode === 'boolean') {
       next.smartMode = prefs.smartMode
+    }
+    if (typeof prefs.autoRotateAccounts === 'boolean') {
+      next.autoRotateAccounts = prefs.autoRotateAccounts
     }
     this.write(next)
     this.doc = next

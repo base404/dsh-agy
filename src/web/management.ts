@@ -218,6 +218,13 @@ export function createAgyManagement(options: AgyManagementOptions): AgyManagemen
     const ledger = stats.snapshot()
     const rows: AccountView[] = []
     for (const [index, account] of storage.accounts.entries()) {
+
+      if (account.cooldownReason === 'quota-exhausted' && areAllModelGroupsExhausted(account, undefined, now)) {
+        const recovery = computeAccountRecoveryTime(account, now)
+        if (recovery !== null && recovery > now) {
+          account.coolingDownUntil = recovery
+        }
+      }
       // Only respect coolingDownUntil set by real backend failures or probes
       // Never force re-park purely inside account.list, which prevents manual recoverAccount from lifting!
       const state: AccountState = account.enabled === false
@@ -364,10 +371,14 @@ export function createAgyManagement(options: AgyManagementOptions): AgyManagemen
       lastModelUsedAt: sessions.getLastModelUsedAt?.() ?? stats.getLastModelUsedAt(),
     }),
 
-    'pool.status': async () => ({
-      busy: await sessions.inFlightAccounts(),
-      lastModelUsedAt: sessions.getLastModelUsedAt?.() ?? stats.getLastModelUsedAt(),
-    }),
+    'pool.status': async () => {
+      const storage = await store.load()
+      return {
+        busy: await sessions.inFlightAccounts(),
+        lastModelUsedAt: sessions.getLastModelUsedAt?.() ?? stats.getLastModelUsedAt(),
+        activeIndex: storage.activeIndex,
+      }
+    },
 
     'pool.recent': async () => ({ recent: recentRequests() }),
 
@@ -724,6 +735,7 @@ export function createAgyManagement(options: AgyManagementOptions): AgyManagemen
         badgeWindowType?: unknown
         badgeSkipZeroWeekly?: unknown
         smartMode?: unknown
+        autoRotateAccounts?: unknown
       } | undefined
       if (body?.conversationBadge !== undefined && typeof body.conversationBadge !== 'boolean') {
         fail('conversationBadge must be a boolean')
@@ -761,6 +773,7 @@ export function createAgyManagement(options: AgyManagementOptions): AgyManagemen
         badgeWindowType: body?.badgeWindowType as any,
         badgeSkipZeroWeekly: body?.badgeSkipZeroWeekly as boolean | undefined,
         smartMode: body?.smartMode as boolean | undefined,
+        autoRotateAccounts: body?.autoRotateAccounts as boolean | undefined,
       })
     },
 

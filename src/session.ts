@@ -93,6 +93,7 @@ export class AgySessionManager {
   private readonly onRotate: SessionManagerOptions['onRotate']
   private readonly onHealthReport: SessionManagerOptions['onHealthReport']
   private readonly recordUsageOption: SessionManagerOptions['recordUsage']
+  private readonly autoRotate?: () => boolean
 
   private readonly failureCounts = new Map<string, number>()
   /** Accounts whose request-time project discovery already failed (no retry per request). */
@@ -123,6 +124,7 @@ export class AgySessionManager {
     this.onRotate = options.onRotate
     this.onHealthReport = options.onHealthReport
     this.recordUsageOption = options.recordUsage
+    this.autoRotate = options.autoRotate
 
     this.tokens = new TokenManager(this.store, (a) => this.accountKey(a))
     this.quotaManager = new SessionQuotaManager({
@@ -226,18 +228,6 @@ export class AgySessionManager {
       }
       clearExpiredState(target, now)
       storage.activeIndex = index
-
-      if (areAllModelGroupsExhausted(target, undefined, now)) {
-        const recoveryTime = computeAccountRecoveryTime(target, now) ?? (now + FULL_QUOTA_COOLDOWN_MS)
-        target.coolingDownUntil = recoveryTime
-        target.cooldownReason = 'quota-exhausted'
-        target.cooldownSetAt = now
-      } else {
-        target.coolingDownUntil = undefined
-        target.cooldownReason = undefined
-        target.cooldownSetAt = undefined
-        target.rateLimitResetTimes = undefined
-      }
     })
     this.clearAllAffinity()
   }
@@ -257,6 +247,7 @@ export class AgySessionManager {
       account.cooldownReason = undefined
       account.cooldownSetAt = undefined
       account.rateLimitResetTimes = undefined
+      account.manuallyRecoveredAt = Date.now()
     })
     if (key !== undefined) this.failureCounts.delete(key)
   }
@@ -286,7 +277,8 @@ export class AgySessionManager {
       if (!account) throw new Error(`account #${accountIndex} not found`)
       if (account.enabled === false) throw new Error(`account #${accountIndex} is disabled`)
     }
-    const maxAttempts = accountIndex === undefined
+    const autoRotate = this.autoRotate?.() ?? true
+    const maxAttempts = (accountIndex === undefined && autoRotate)
       ? storage.accounts.filter((account) => account.enabled !== false).length
       : 1
     let proxyUnreachableCount = 0
@@ -303,6 +295,7 @@ export class AgySessionManager {
           inFlight: this.inFlight,
           store: this.store,
           accountKey: (a) => this.accountKey(a),
+          autoRotate: this.autoRotate,
         })
         : (() => {
           const account = storage.accounts[accountIndex]
@@ -475,7 +468,9 @@ export class AgySessionManager {
       }
 
       if (decision.action === 'rotate' || decision.action === 'cool') {
-        const currentIndex = storage.accounts.findIndex((a) => this.accountKey(a) === key)
+        const autoRotate = this.autoRotate?.() ?? true
+        if (autoRotate) {
+          const currentIndex = storage.accounts.findIndex((a) => this.accountKey(a) === key)
         const familyKey = familyKeyOf(info?.model)
         const nextIndex = pickNextAccountIndex(storage.accounts, currentIndex >= 0 ? currentIndex : storage.activeIndex, Date.now(), familyKey)
         if (nextIndex !== storage.activeIndex) {
@@ -483,6 +478,7 @@ export class AgySessionManager {
           nextIndexToRotate = nextIndex
         }
         this.affinity.clearAffinityForAccount(key)
+        }
       }
     })
 

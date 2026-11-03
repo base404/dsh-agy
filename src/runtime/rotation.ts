@@ -184,7 +184,8 @@ export function decideRotation(
 
         if (areAllModelGroupsExhausted(account, model, now, familyReset)) {
           const recoveryTime = computeAccountRecoveryTime(account, now, familyReset, model) ?? familyReset
-          const actualCooldownMs = Math.min(Math.max(recoveryTime - now, 60_000), FULL_QUOTA_COOLDOWN_MS)
+          const maxCooldownMs = 8 * 24 * 60 * 60 * 1000
+          const actualCooldownMs = Math.min(Math.max(recoveryTime - now, 60_000), maxCooldownMs)
           account.coolingDownUntil = now + actualCooldownMs
           account.cooldownReason = 'quota-exhausted'
           account.cooldownSetAt = now
@@ -275,6 +276,7 @@ export function pickNextAccountIndex(
     .filter(({ account, index }) => {
       if (index === currentIndex || account.enabled === false) return false
       if (isCoolingDown(account, now)) return false
+      if (areAllModelGroupsExhausted(account, undefined, now)) return false
       if (modelOrFamily && isFamilyRateLimited(account, modelOrFamily, now)) return false
       if (modelOrFamily && account.cachedModels && account.cachedModels.length > 0) {
         if (!account.cachedModels.includes(modelOrFamily)) {

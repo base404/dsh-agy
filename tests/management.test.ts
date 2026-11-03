@@ -186,6 +186,37 @@ function makeHarness(options: {
 }
 
 describe('agy management RPC', () => {
+  it('updates cooldownUntil to earliest model recovery time when all model groups are exhausted', async () => {
+    const acc = account({
+      email: 'saurabh@gmail.com',
+      coolingDownUntil: Date.now() + 60_000,
+      cooldownReason: 'quota-exhausted',
+      cachedLimits: {
+        updatedAt: Date.now(),
+        groups: [
+          {
+            name: 'Gemini Models',
+            windows: [
+              { bucketId: 'g-5h', window: '5h', remainingFraction: 1, resetTime: new Date(Date.now() + 3600_000 * 5).toISOString() },
+              { bucketId: 'g-weekly', window: 'weekly', remainingFraction: 0, resetTime: '2026-11-08T08:11:23Z' },
+            ],
+          },
+          {
+            name: 'Claude and GPT models',
+            windows: [
+              { bucketId: '3p-5h', window: '5h', remainingFraction: 1, resetTime: new Date(Date.now() + 3600_000 * 5).toISOString() },
+              { bucketId: '3p-weekly', window: 'weekly', remainingFraction: 0, resetTime: '2026-11-05T21:33:48Z' },
+            ],
+          },
+        ],
+      },
+    })
+    const harness = makeHarness({ accounts: [acc] })
+    const result = await harness.management.call('account.list', {}) as { accounts: Array<{ cooldownUntil: string | null; state: string }> }
+    expect(result.accounts[0]?.state).toBe('cooling')
+    expect(result.accounts[0]?.cooldownUntil).toBe(new Date('2026-11-05T21:33:48Z').toISOString())
+  })
+
   afterEach(() => vi.unstubAllGlobals())
 
   it('rejects an unknown method', async () => {
@@ -289,6 +320,7 @@ describe('agy management RPC', () => {
       busy: Array<{ index: number, email: string | null, count: number }>
     }
     expect(result.busy).toEqual([{ index: 1, email: 'b@y.com', count: 2 }])
+    expect((result as any).activeIndex).toBe(0)
   })
 
   it('carries the burn rates on the limits reply, per index', async () => {
@@ -1020,6 +1052,12 @@ describe('agy management RPC', () => {
 
       const off = await management.call('ui.prefs.set', { smartMode: false }) as { smartMode: boolean }
       expect(off.smartMode).toBe(false)
+
+      const autoRotateOn = await management.call('ui.prefs.set', { autoRotateAccounts: true }) as { autoRotateAccounts: boolean }
+      expect(autoRotateOn.autoRotateAccounts).toBe(true)
+
+      const autoRotateOff = await management.call('ui.prefs.set', { autoRotateAccounts: false }) as { autoRotateAccounts: boolean }
+      expect(autoRotateOff.autoRotateAccounts).toBe(false)
       expect(await management.call('ui.prefs.get', {}) as { smartMode: boolean })
         .toMatchObject({ smartMode: false })
     })

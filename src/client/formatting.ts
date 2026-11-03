@@ -95,8 +95,8 @@ export function clockTime(iso: string | null, lang?: string): string {
     && date.getMonth() === now.getMonth()
     && date.getDate() === now.getDate()
   return sameDay
-    ? date.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit' })
-    : date.toLocaleString(lang, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    ? date.toLocaleTimeString(lang, { hour: '2-digit', minute: '2-digit', hour12: false })
+    : date.toLocaleString(lang, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
 }
 
 /** A ledger day key ('YYYY-MM-DD') as a short label. */

@@ -13,6 +13,8 @@ import {
   ingestFamilyQuotas,
   isLimitsStale,
   isQuotaStale,
+  areAllModelGroupsExhausted,
+  computeAccountRecoveryTime,
   limitGroupReadings,
   quotaCooldownContradicted,
 } from '../runtime/quota.ts'
@@ -160,6 +162,13 @@ export class SessionQuotaManager {
         this.options.noteLimitSample(update.key, update.groups, update.updatedAt)
         if (this.liftContradictedQuotaPark(target, limitGroupReadings(update.groups), update.updatedAt)) {
           liftedKeys.add(update.key)
+        } else if (areAllModelGroupsExhausted(target, undefined, update.updatedAt) && !((target.manuallyRecoveredAt ?? 0) >= update.updatedAt)) {
+          const recovery = computeAccountRecoveryTime(target, update.updatedAt)
+          if (recovery !== null && recovery > update.updatedAt) {
+            target.coolingDownUntil = recovery
+            target.cooldownReason = 'quota-exhausted'
+            target.cooldownSetAt = update.updatedAt
+          }
         }
       }
     }
@@ -176,6 +185,13 @@ export class SessionQuotaManager {
               target.coolingDownUntil = undefined
               target.cooldownReason = undefined
               target.cooldownSetAt = undefined
+            } else if (areAllModelGroupsExhausted(target, undefined, update.updatedAt) && !((target.manuallyRecoveredAt ?? 0) >= update.updatedAt)) {
+              const recovery = computeAccountRecoveryTime(target, update.updatedAt)
+              if (recovery !== null && recovery > update.updatedAt) {
+                target.coolingDownUntil = recovery
+                target.cooldownReason = 'quota-exhausted'
+                target.cooldownSetAt = update.updatedAt
+              }
             }
           }
         }

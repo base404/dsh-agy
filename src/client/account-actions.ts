@@ -56,7 +56,11 @@ export function useAccountHandlers(options: CreateAccountHandlersOptions): Accou
       })
     },
     onRecover: (index: number) => {
-      void act(() => rpc.call('account.recover', { index }))
+      void act(async () => {
+        await rpc.call('account.recover', { index })
+      }).then(() => {
+        window.dispatchEvent(new CustomEvent('agy:account-changed', { detail: { index } }))
+      })
     },
     onVerify: (index: number) => {
       void runAction(async () => {
@@ -69,7 +73,11 @@ export function useAccountHandlers(options: CreateAccountHandlersOptions): Accou
     },
     onDelete: (index: number) => {
       if (!window.confirm(t('confirmDelete'))) return
-      void act(() => rpc.call('account.delete', { index }))
+      void act(async () => {
+        await rpc.call('account.delete', { index })
+      }).then(() => {
+        window.dispatchEvent(new CustomEvent('agy:account-changed', { detail: { index } }))
+      })
     },
     onTest: (index: number) => {
       void runAction(async () => {

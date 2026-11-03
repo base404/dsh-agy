@@ -244,6 +244,7 @@ export interface AgyRpcMethods {
     result: {
       busy: Array<{ index: number; email: string | null; count: number }>
       lastModelUsedAt?: number | null
+      activeIndex?: number
     }
   }
   /**

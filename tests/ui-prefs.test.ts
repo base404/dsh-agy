@@ -95,6 +95,7 @@ describe('UiPrefsStore', () => {
         badgeWindowType: 'both',
         badgeSkipZeroWeekly: true,
         smartMode: false,
+        autoRotateAccounts: false,
       })
     } finally {
       if (existsSync(file)) rmSync(file)

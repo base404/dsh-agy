@@ -754,9 +754,12 @@ export function computeAccountRecoveryTime(
       const coversFailed = failedFamily !== undefined && groupFamilies.includes(failedFamily)
 
       let groupReset: number | null = null
+      let isExhausted = false
+
       for (const w of group.windows) {
         const threshold = w.window.toLowerCase() === 'weekly' ? WEEKLY_QUOTA_THRESHOLD : 0
         if (typeof w.remainingFraction === 'number' && w.remainingFraction <= threshold) {
+          isExhausted = true
           const r = parseFutureResetMs(w.resetTime ?? undefined, now)
           if (r !== undefined && (groupReset === null || r > groupReset)) {
             groupReset = r
@@ -764,28 +767,36 @@ export function computeAccountRecoveryTime(
         }
       }
 
-      if (coversFailed) {
-        if (failedResetMs !== undefined && groupReset !== null) {
-          consider(Math.min(failedResetMs, groupReset))
-        } else if (groupReset !== null) {
-          consider(groupReset)
-        } else if (failedResetMs !== undefined) {
-          consider(failedResetMs)
-        }
-        continue
-      }
-
+      let groupReady: number | null = null
       if (groupReset !== null) {
-        consider(groupReset)
+        groupReady = groupReset
+      } else if (coversFailed && failedResetMs !== undefined) {
+        isExhausted = true
+        groupReady = failedResetMs
       } else if (groupFamilies.length > 0 && account.rateLimitResetTimes) {
         for (const fam of groupFamilies) {
-          consider(account.rateLimitResetTimes[fam])
+          const famReset = account.rateLimitResetTimes[fam]
+          if (famReset !== undefined && famReset > now) {
+            isExhausted = true
+            groupReady = groupReady !== null ? Math.max(groupReady, famReset) : famReset
+          }
         }
       }
+
+      // If this group is not exhausted, it is ready now
+      if (!isExhausted) {
+        return now
+      }
+
+      if (groupReady !== null) {
+        consider(groupReady)
+      }
     }
+
+    if (earliest !== null) return earliest
   }
 
-  // 2. Family rate limits
+  // 2. Family rate limits (fallback when no groups)
   if (failedResetMs !== undefined) consider(failedResetMs)
   if (account.rateLimitResetTimes) {
     for (const r of Object.values(account.rateLimitResetTimes)) {
@@ -793,11 +804,20 @@ export function computeAccountRecoveryTime(
     }
   }
 
-  // 3. CachedQuota reset times
+  // 3. CachedQuota reset times (fallback when no groups)
   if (account.cachedQuota) {
     for (const q of Object.values(account.cachedQuota)) {
-      consider(parseFutureResetMs(q.resetTime, now))
-      consider(parseFutureResetMs(q.weeklyResetTime, now))
+      const fiveHourReset = parseFutureResetMs(q.resetTime, now)
+      const weeklyReset = parseFutureResetMs(q.weeklyResetTime, now)
+      const fiveHourSpent = typeof q.remainingFraction === 'number' && q.remainingFraction <= 0
+      const weeklySpent = typeof q.weeklyFraction === 'number' && q.weeklyFraction <= WEEKLY_QUOTA_THRESHOLD
+
+      let quotaReady: number | null = null
+      if (fiveHourSpent && fiveHourReset !== undefined) quotaReady = fiveHourReset
+      if (weeklySpent && weeklyReset !== undefined) {
+        quotaReady = quotaReady !== null ? Math.max(quotaReady, weeklyReset) : weeklyReset
+      }
+      if (quotaReady !== null) consider(quotaReady)
     }
   }
 

@@ -196,7 +196,7 @@ export const AGY_STYLES_CSS = `
   outline: 2px solid ${aliasVar('label-primary')};
   outline-offset: -2px;
 }
-.agy-rowmain { min-width: 0; flex: 1 1 160px; display: flex; flex-direction: column; gap: 3px; }
+.agy-rowmain { min-width: min(220px, 100%); flex: 1 1 180px; display: flex; flex-direction: column; gap: 3px; }
 .agy-rowtitle { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .agy-rowname {
   font: var(--dsw-font-xs-strong-13); color: ${aliasVar('label-primary')};
@@ -208,8 +208,8 @@ export const AGY_STYLES_CSS = `
 }
 /* margin-left: auto right-aligns the cluster while it shares a line with the
    identity, and becomes inert once flex-wrap moves it to its own line. */
-.agy-rowactions { display: flex; align-items: center; gap: 6px; flex: none; margin-left: auto; }
-.agy-state { display: inline-flex; align-items: center; gap: 6px; flex: none; }
+.agy-rowactions { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-left: auto; }
+.agy-state { display: inline-flex; align-items: center; gap: 6px; flex: none; white-space: nowrap; }
 
 .agy-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .agy-actions > :first-child:not(button) { flex: 1; min-width: 150px; }
@@ -898,6 +898,8 @@ export const AGY_STYLES_CSS = `
    occupies the account card's top slot in place of static email text,
    so it spans cleanly and acts as the board's account view picker. */
 .agy-ui-account-select {
+  flex: 1;
+  min-width: 0;
   width: 100%;
   font: var(--dsw-font-xxs-strong-12);
   color: ${aliasVar('label-primary')};

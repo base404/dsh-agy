@@ -37,7 +37,7 @@ export function stateBadge(state: AccountView['state'], label: string): ReactNod
     ? 'done'
     : state === 'cooling' ? 'warning' : 'error'
   const tone: TagTone = state === 'active' ? 'success' : state === 'cooling' ? 'warning' : 'danger'
-  return h('span', { className: 'agy-state' },
+  return h('span', { className: 'agy-state', title: label },
     h(StateDot, { state: dot, size: 8 }),
     h(Tag, { tone }, label))
 }

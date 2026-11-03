@@ -175,6 +175,8 @@ export interface ManagedAccount {
    * `cooldownReason` when the window expires.
    */
   cooldownSetAt?: number
+  /** When cooldown was manually lifted (ms). */
+  manuallyRecoveredAt?: number
   verificationRequired?: boolean
   verificationRequiredAt?: number
   verificationRequiredReason?: string

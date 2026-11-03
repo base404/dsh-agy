@@ -792,7 +792,7 @@ describe('buildAccountSelectOptions', () => {
 
   const t: QuotaTranslate = (key: string) => (zh as Record<string, string>)[key] ?? key
 
-  it('renders all accounts and disables non-active cooling/disabled/verification rows with suffixes', () => {
+  it('renders all accounts and disables non-active disabled/verification rows with suffixes (cooling selectable)', () => {
     const accounts = [
       view(0, 'active', true),
       view(1, 'cooling', false),
@@ -811,11 +811,11 @@ describe('buildAccountSelectOptions', () => {
       disabled: false,
     })
 
-    // Cooling account
+    // Cooling account is selectable so user can inspect its data
     expect(options[1]).toEqual({
       index: 1,
       label: 'us***@example.com (冷却中)',
-      disabled: true,
+      disabled: false,
     })
 
     // Disabled account

@@ -14,6 +14,7 @@ import {
   DEFAULT_BADGE_SKIP_ZERO_WEEKLY,
   DEFAULT_BADGE_WINDOW_TYPE,
   DEFAULT_QUOTA_REFRESH_MINUTES,
+  DEFAULT_AUTO_ROTATE_ACCOUNTS,
   DEFAULT_SMART_MODE,
   QUOTA_REFRESH_MAX_MINUTES,
   QUOTA_REFRESH_MIN_MINUTES,
@@ -35,6 +36,7 @@ export function PreferencesCard(props: {
   const [badgeWindowType, setBadgeWindowType] = useState<BadgeWindowType>(DEFAULT_BADGE_WINDOW_TYPE)
   const [badgeSkipZeroWeekly, setBadgeSkipZeroWeekly] = useState(DEFAULT_BADGE_SKIP_ZERO_WEEKLY)
   const [smartMode, setSmartMode] = useState(DEFAULT_SMART_MODE)
+  const [autoRotateAccounts, setAutoRotateAccounts] = useState(DEFAULT_AUTO_ROTATE_ACCOUNTS)
   const [refreshMinutes, setRefreshMinutes] = useState<number | null>(DEFAULT_QUOTA_REFRESH_MINUTES)
   const [minutesDraft, setMinutesDraft] = useState(String(DEFAULT_QUOTA_REFRESH_MINUTES))
   const [loading, setLoading] = useState(true)
@@ -65,6 +67,7 @@ export function PreferencesCard(props: {
         setBadgeWindowType(prefs?.badgeWindowType ?? DEFAULT_BADGE_WINDOW_TYPE)
         setBadgeSkipZeroWeekly(prefs?.badgeSkipZeroWeekly ?? DEFAULT_BADGE_SKIP_ZERO_WEEKLY)
         setSmartMode(prefs?.smartMode ?? DEFAULT_SMART_MODE)
+        setAutoRotateAccounts(prefs?.autoRotateAccounts ?? DEFAULT_AUTO_ROTATE_ACCOUNTS)
         detailedPrefRef.current?.(prefs?.detailedQuotaReset === true)
         setLoading(false)
       }
@@ -73,6 +76,26 @@ export function PreferencesCard(props: {
     })
     return () => { active = false }
   }, [rpc])
+
+  const toggleAutoRotateAccounts = useCallback(async (checked: boolean) => {
+    setSaving(true)
+    setAutoRotateAccounts(checked)
+    if (errorTimer.current !== undefined) clearTimeout(errorTimer.current)
+    try {
+      const res = await rpc.call('ui.prefs.set', { autoRotateAccounts: checked })
+      setAutoRotateAccounts(res.autoRotateAccounts)
+      setSaveError(null)
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('agy:ui-prefs-changed', { detail: res }))
+      }
+    } catch (err) {
+      setAutoRotateAccounts(!checked)
+      setSaveError(t('prefSaveFailed', { message: err instanceof Error ? err.message : String(err) }))
+      errorTimer.current = setTimeout(() => setSaveError(null), ACTION_MESSAGE_TTL_MS)
+    } finally {
+      setSaving(false)
+    }
+  }, [rpc, t])
 
   const toggleBadge = useCallback(async (checked: boolean) => {
     setSaving(true)
@@ -275,6 +298,16 @@ export function PreferencesCard(props: {
     .filter((g, idx, arr) => arr.findIndex((x) => x.name === g.name) === idx)
 
   const rows = [
+    h('div', { className: 'agy-pref-row', key: 'autoRotate' },
+      h('div', { className: 'agy-pref-info' },
+        h('div', { className: 'agy-pref-name' }, t('prefAutoRotateAccounts')),
+        h('div', { className: 'agy-pref-desc' }, t('prefAutoRotateAccountsDesc'))),
+      h(Switch, {
+        label: t('prefAutoRotateAccounts'),
+        checked: autoRotateAccounts,
+        disabled: loading || saving,
+        onChange: (checked: boolean) => void toggleAutoRotateAccounts(checked),
+      })),
     h('div', { className: 'agy-pref-row', key: 'detailed' },
       h('div', { className: 'agy-pref-info' },
         h('div', { className: 'agy-pref-name' }, t('prefDetailedQuotaReset')),

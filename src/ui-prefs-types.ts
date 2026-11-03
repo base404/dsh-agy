@@ -11,6 +11,7 @@ export const DEFAULT_BADGE_MODEL_GROUP = 'auto'
 export const DEFAULT_BADGE_WINDOW_TYPE: BadgeWindowType = 'both'
 export const DEFAULT_BADGE_SKIP_ZERO_WEEKLY = true
 export const DEFAULT_SMART_MODE = false
+export const DEFAULT_AUTO_ROTATE_ACCOUNTS = false
 
 export interface UiPrefsView {
   conversationBadge: boolean
@@ -31,6 +32,8 @@ export interface UiPrefsView {
   badgeSkipZeroWeekly: boolean
   /** Whether smart auto-refresh mode is enabled. */
   smartMode: boolean
+  /** Whether to automatically rotate to another account when current account has no quota or is cooling. */
+  autoRotateAccounts: boolean
 }
 
 export interface SetUiPrefsPayload {
@@ -42,6 +45,7 @@ export interface SetUiPrefsPayload {
   badgeWindowType?: BadgeWindowType
   badgeSkipZeroWeekly?: boolean
   smartMode?: boolean
+  autoRotateAccounts?: boolean
 }
 
 export interface UiPrefsDocument {
@@ -54,6 +58,7 @@ export interface UiPrefsDocument {
   badgeWindowType?: BadgeWindowType
   badgeSkipZeroWeekly?: boolean
   smartMode?: boolean
+  autoRotateAccounts?: boolean
 }
 
 /**
