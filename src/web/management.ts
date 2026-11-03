@@ -218,16 +218,8 @@ export function createAgyManagement(options: AgyManagementOptions): AgyManagemen
     const ledger = stats.snapshot()
     const rows: AccountView[] = []
     for (const [index, account] of storage.accounts.entries()) {
-      const allExhausted = account.enabled !== false
-        && account.verificationRequired !== true
-        && !isCoolingDown(account, now)
-        && areAllModelGroupsExhausted(account, undefined, now)
-      if (allExhausted) {
-        const recoveryTime = computeAccountRecoveryTime(account, now) ?? (now + FULL_QUOTA_COOLDOWN_MS)
-        account.coolingDownUntil = recoveryTime
-        account.cooldownReason = 'quota-exhausted'
-        account.cooldownSetAt = now
-      }
+      // Only respect coolingDownUntil set by real backend failures or probes
+      // Never force re-park purely inside account.list, which prevents manual recoverAccount from lifting!
       const state: AccountState = account.enabled === false
         ? 'disabled'
         : account.verificationRequired === true

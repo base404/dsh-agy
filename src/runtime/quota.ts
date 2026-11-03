@@ -86,6 +86,10 @@ function earliestResetTime(a?: string, b?: string): string | undefined {
 export function familiesForBucketId(bucketId: string, window?: string): ModelFamily[] {
   const id = bucketId.toLowerCase()
   const families: ModelFamily[] = []
+  if (id.startsWith('gemini-argon-')) {
+    // Specific experimental variants must not block standard Google models
+    return []
+  }
   if (id.startsWith('gemini-')) families.push('google')
   else if (id.startsWith('3p-') || id.startsWith('third_party-')) families.push('anthropic', 'openai')
   else if (id.startsWith('claude-')) families.push('anthropic')
@@ -121,6 +125,10 @@ export function familiesForBucketId(bucketId: string, window?: string): ModelFam
 export function familiesForGroupName(name: string): ModelFamily[] {
   const label = name.toLowerCase()
   const families: ModelFamily[] = []
+  if (label.includes('argon')) {
+    // Specific experimental variants must not block standard Google models
+    return []
+  }
   if (label.includes('gemini') || label.includes('google')) families.push('google')
   const claude = label.includes('claude')
   const gpt = label.includes('gpt')
