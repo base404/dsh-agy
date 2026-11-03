@@ -695,15 +695,17 @@ export function areAllModelGroupsExhausted(
   }
 
   // 4. Default: Antigravity known families are Google and Anthropic
-  if (failedModel !== undefined) {
+  if (failedModel === undefined) {
+    if (failedResetMs !== undefined) return true
     const knownFamilies: ModelFamily[] = ['google', 'anthropic']
-    return knownFamilies.every((fam) => {
-      if (failedFamily === fam) return true
-      return (account.rateLimitResetTimes?.[fam] ?? 0) > now
-    })
+    return knownFamilies.every((fam) => (account.rateLimitResetTimes?.[fam] ?? 0) > now)
   }
 
-  return true
+  const knownFamilies: ModelFamily[] = ['google', 'anthropic']
+  return knownFamilies.every((fam) => {
+    if (failedFamily === fam) return true
+    return (account.rateLimitResetTimes?.[fam] ?? 0) > now
+  })
 }
 
 /**
@@ -908,13 +910,12 @@ export function rankPoolCandidates(
 
     if (blockedUntil === null && account.cachedLimits?.groups) {
       for (const group of account.cachedLimits.groups) {
-        const groupFamilies = familiesForGroupName(group.name)
-        const matches = !family
-          || groupFamilies.includes(family)
-          || group.windows.some((w) => familiesForBucketId(w.window).includes(family))
+        const groupFamilies = familiesForGroup(group)
+        const matches = !family || groupFamilies.includes(family)
         if (matches) {
           for (const window of group.windows) {
-            if (typeof window.remainingFraction === 'number' && window.remainingFraction <= 0) {
+            const threshold = window.window.toLowerCase() === 'weekly' ? WEEKLY_QUOTA_THRESHOLD : 0
+            if (typeof window.remainingFraction === 'number' && window.remainingFraction <= threshold) {
               const resetMs = parseFutureResetMs(window.resetTime ?? undefined, now)
               if (resetMs !== undefined) {
                 blockedUntil = blockedUntil === null ? resetMs : Math.max(blockedUntil, resetMs)

@@ -89,8 +89,8 @@ export const MOBILE_BREAKPOINT_PX = 640
  * rotation still moves forward from the first eligible row rather than
  * dead-ending.
  */
-export function nextSwitchableIndex(accounts: readonly AccountView[]): number | null {
-  const healthy = accounts.filter((candidate) => candidate.state === 'active')
+export function nextSwitchableIndex(accounts: readonly AccountView[], now = Date.now()): number | null {
+  const healthy = accounts.filter((candidate) => candidate.state === 'active' && !isAccountAllQuotaExhausted(candidate, now))
   const activeIndex = accounts.find((candidate) => candidate.active)?.index ?? accounts[0]?.index
 
   if (healthy.length > 0) {
@@ -104,7 +104,7 @@ export function nextSwitchableIndex(accounts: readonly AccountView[]): number | 
     return (nextAfter ?? healthy[0])!.index
   }
 
-  const switchable = accounts.filter((candidate) => candidate.state !== 'disabled')
+  const switchable = accounts.filter((candidate) => candidate.state !== 'disabled' && candidate.state !== 'cooling' && !isAccountAllQuotaExhausted(candidate, now))
   if (switchable.length < 2) return null
   const pos = switchable.findIndex((candidate) => candidate.index === activeIndex)
   const anchor = pos >= 0 ? pos : switchable.length - 1
@@ -130,22 +130,26 @@ export function buildAccountSelectOptions(
   accounts: readonly AccountView[],
   activeAccountIndex: number | null,
   t: QuotaTranslate,
+  now = Date.now(),
 ): AccountOptionItem[] {
   return accounts.map((candidate) => {
     const baseEmail = candidate.email ? desensitizeEmail(candidate.email) : `#${candidate.index}`
+    const isExhausted = isAccountAllQuotaExhausted(candidate, now)
+    const effectiveState = candidate.state === 'active' && isExhausted ? 'cooling' : candidate.state
     let suffix = ''
-    if (candidate.state === 'disabled') {
+    if (effectiveState === 'disabled') {
       suffix = ` (${t('stateDisabled')})`
-    } else if (candidate.state === 'cooling') {
+    } else if (effectiveState === 'cooling') {
       suffix = ` (${t('stateCooling')})`
-    } else if (candidate.state === 'verification-required') {
+    } else if (effectiveState === 'verification-required') {
       suffix = ` (${t('stateVerificationRequired')})`
     }
-    const isSelectable = candidate.state === 'active' || candidate.index === activeAccountIndex
+    const isCurrent = candidate.index === activeAccountIndex
+    const isSelectable = effectiveState === 'active'
     return {
       index: candidate.index,
       label: `${baseEmail}${suffix}`,
-      disabled: !isSelectable,
+      disabled: !isSelectable && !isCurrent,
     }
   })
 }
@@ -559,17 +563,37 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
     if (targetIndex === activeIndex && !isUpdating) return
     setIsUpdating(true)
     setError(null)
-    lastManualIndexRef.current = targetIndex
 
-    // Optimistically update the active account in local state so the badge and
-    // popover dropdown/cards switch in unison without waiting for network.
-    setAccounts((current) => current.map((account) => ({
-      ...account,
-      active: account.index === targetIndex,
-    })))
+    const now = Date.now()
+    const targetCandidate = accounts.find((a) => a.index === targetIndex)
+    if (targetCandidate && (targetCandidate.state === 'cooling' || isAccountAllQuotaExhausted(targetCandidate, now))) {
+      setError(t('cooldownReasonQuotaExhausted'))
+      setIsUpdating(false)
+      return
+    }
 
     try {
+      const limitsRes = await rpc.call('account.limits', { force: true, index: targetIndex })
+      const targetEntry = limitsRes.limits.find((entry) => entry.index === targetIndex)
+      const updatedTargetLimits = targetEntry?.groups ?? null
+      const testView: AccountView | undefined = targetCandidate
+        ? { ...targetCandidate, limits: updatedTargetLimits }
+        : undefined
+      if (testView && isAccountAllQuotaExhausted(testView, Date.now())) {
+        setError(t('cooldownReasonQuotaExhausted'))
+        const listed = await rpc.call('account.list', {})
+        setAccounts(listed.accounts)
+        setIsUpdating(false)
+        return
+      }
+
       await rpc.call('account.activate', { index: targetIndex })
+      lastManualIndexRef.current = targetIndex
+      setAccounts((current) => current.map((account) => ({
+        ...account,
+        active: account.index === targetIndex,
+        limits: account.index === targetIndex ? updatedTargetLimits : account.limits,
+      })))
       announceAccountChanged(targetIndex)
       await load(true, false, targetIndex)
     } catch (err) {
@@ -583,7 +607,7 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
     } finally {
       setIsUpdating(false)
     }
-  }, [activeIndex, isUpdating, load, rpc])
+  }, [accounts, activeIndex, isUpdating, load, rpc, t])
 
   /**
    * Rotate the pool's active account forward one position (wrapping around),
@@ -617,12 +641,18 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
   useEffect(() => {
     if (accounts.length === 0) return
     const active = accounts.find((candidate) => candidate.active) ?? accounts[0]
-    if (!active || !isAccountQuotaExhausted(active, Date.now())) {
+    const now = Date.now()
+    if (!active || (!isAccountQuotaExhausted(active, now) && !isAccountAllQuotaExhausted(active, now) && active.state !== 'cooling')) {
       autoRotateAttemptedRef.current = false
       return
     }
-    if (lastManualIndexRef.current === active.index || autoRotateAttemptedRef.current) return
-    const next = nextHealthyIndex(accounts, Date.now())
+    if (isAccountAllQuotaExhausted(active, now) || active.state === 'cooling') {
+      lastManualIndexRef.current = null
+    } else if (lastManualIndexRef.current === active.index) {
+      return
+    }
+    if (autoRotateAttemptedRef.current) return
+    const next = nextHealthyIndex(accounts, now)
     if (next === null || next === active.index) return
     autoRotateAttemptedRef.current = true
     lastManualIndexRef.current = null
@@ -734,9 +764,15 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
     const has5h = groupRead.fiveHour !== null
     const hasWeekly = groupRead.weekly !== null
     const weeklyIsZero = groupRead.weekly === 0
-    const skipWeekly = weeklyIsZero && badgeSkipZeroWeekly
+    const fiveHourIsZero = groupRead.fiveHour === 0
 
-    if (badgeWindowType === '5h') {
+    if (weeklyIsZero) {
+      shownToken = 'weekly'
+      shownFraction = groupRead.weekly
+    } else if (fiveHourIsZero) {
+      shownToken = '5h'
+      shownFraction = groupRead.fiveHour
+    } else if (badgeWindowType === '5h') {
       shownToken = '5h'
       shownFraction = groupRead.fiveHour
     } else if (badgeWindowType === 'weekly') {
@@ -744,11 +780,9 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
       shownFraction = groupRead.weekly
     } else {
       const flipPhase = Math.floor(now / RENDER_TICK_MS) % 2
-      const showWeekly = skipWeekly
-        ? false
-        : has5h && hasWeekly
-          ? flipPhase === 1
-          : hasWeekly && !has5h
+      const showWeekly = has5h && hasWeekly
+        ? flipPhase === 1
+        : hasWeekly && !has5h
       shownToken = showWeekly ? 'weekly' : '5h'
       shownFraction = showWeekly ? groupRead.weekly : groupRead.fiveHour
     }
@@ -771,11 +805,14 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
       ? t('badgeReading', { window: shownWindowWithSpace, percent: shownPercent })
       : t('badgeUnmeasured')
 
-    if (shownFraction !== null) {
-      if (shownFraction <= 0) {
-        effectiveDotState = 'error'
-        statusClass = 'quota-error'
-      } else if (shownFraction <= 0.2) {
+    const isExhausted = isAccountAllQuotaExhausted(activeAccount, now)
+    const isCooling = activeAccount?.state === 'cooling'
+
+    if (isExhausted || isCooling || weeklyIsZero || (shownFraction !== null && shownFraction <= 0)) {
+      effectiveDotState = 'error'
+      statusClass = 'quota-error'
+    } else if (shownFraction !== null) {
+      if (shownFraction <= 0.2) {
         effectiveDotState = 'warning'
         statusClass = 'quota-warn'
       } else {
@@ -789,7 +826,7 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
     }
   }
 
-  const selectOptions = buildAccountSelectOptions(accounts, activeIndex, t)
+  const selectOptions = buildAccountSelectOptions(accounts, activeIndex, t, now)
 
   const rawCards = buildQuotaCards(viewAccount, t, now, detailedReset)
   // Each card is an upstream group (e.g. Gemini, Claude+GPT). The 5h bar turns

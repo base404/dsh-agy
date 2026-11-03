@@ -742,6 +742,43 @@ describe('nextSwitchableIndex', () => {
     // Two disabled accounts + one active-looking-but-disabled edge: still null.
     expect(nextSwitchableIndex([view(0, 'disabled', true), view(1, 'disabled')])).toBeNull()
   })
+
+  it('skips accounts whose all model groups have weekly 0% quota', () => {
+    const now = Date.now()
+    const futureReset = new Date(now + 86400_000).toISOString()
+    const exhaustedAccount: AccountView = {
+      index: 1,
+      email: 'saura@gmail.com',
+      state: 'active',
+      active: false,
+      limits: [
+        {
+          name: 'Gemini Models',
+          windows: [
+            { bucketId: 'gemini-5h', window: '5h', remainingFraction: 0.98, resetTime: futureReset },
+            { bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: 0, resetTime: futureReset },
+          ],
+        },
+      ],
+    } as unknown as AccountView
+
+    const activeAccount: AccountView = {
+      index: 0,
+      email: 'active@gmail.com',
+      state: 'active',
+      active: true,
+    } as unknown as AccountView
+
+    const healthyAccount: AccountView = {
+      index: 2,
+      email: 'healthy@gmail.com',
+      state: 'active',
+      active: false,
+    } as unknown as AccountView
+
+    // Rotating from index 0 should skip index 1 (exhausted weekly) and land on index 2
+    expect(nextSwitchableIndex([activeAccount, exhaustedAccount, healthyAccount], now)).toBe(2)
+  })
 })
 
 
@@ -820,4 +857,46 @@ describe('buildAccountSelectOptions', () => {
       disabled: false,
     })
   })
+
+  it('marks an account as cooling and disabled in dropdown when all model groups have weekly 0% quota', () => {
+    const now = Date.now()
+    const futureReset = new Date(now + 86400_000).toISOString()
+    const exhaustedAccount: AccountView = {
+      index: 1,
+      email: 'saura@gmail.com',
+      state: 'active',
+      active: false,
+      limits: [
+        {
+          name: 'Gemini Models',
+          windows: [
+            { bucketId: 'gemini-5h', window: '5h', remainingFraction: 0.98, resetTime: futureReset },
+            { bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: 0, resetTime: futureReset },
+          ],
+        },
+        {
+          name: 'Claude and GPT models',
+          windows: [
+            { bucketId: '3p-5h', window: '5h', remainingFraction: 1, resetTime: futureReset },
+            { bucketId: '3p-weekly', window: 'weekly', remainingFraction: 0, resetTime: futureReset },
+          ],
+        },
+      ],
+    } as unknown as AccountView
+
+    const activeAccount: AccountView = {
+      index: 0,
+      email: 'healthy@gmail.com',
+      state: 'active',
+      active: true,
+    } as unknown as AccountView
+
+    const options = buildAccountSelectOptions([activeAccount, exhaustedAccount], 0, t, now)
+    expect(options[1]).toEqual({
+      index: 1,
+      label: 'sa***@gmail.com (冷却中)',
+      disabled: true,
+    })
+  })
 })
+

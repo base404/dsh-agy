@@ -347,4 +347,36 @@ describe('solo-account limits', () => {
     expect(after.accounts[0]!.coolingDownUntil).toBeGreaterThan(Date.now())
     expect(after.accounts[0]!.cooldownReason).toBe('quota-exhausted')
   })
+
+  it('cools an active account when refreshLimits discovers all model groups have weekly 0% quota', async () => {
+    const calls: string[] = []
+    const futureReset = new Date(Date.now() + 86400_000).toISOString()
+    stubSummary(calls, [
+      {
+        displayName: 'Gemini Models',
+        buckets: [
+          { bucketId: 'gemini-5h', window: '5h', remainingFraction: 0.98, resetTime: futureReset },
+          { bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: 0, resetTime: futureReset },
+        ],
+      },
+      {
+        displayName: 'Claude and GPT models',
+        buckets: [
+          { bucketId: '3p-5h', window: '5h', remainingFraction: 1, resetTime: futureReset },
+          { bucketId: '3p-weekly', window: 'weekly', remainingFraction: 0, resetTime: futureReset },
+        ],
+      },
+    ])
+    const acc1 = account('saura@gmail.com')
+    const acc2 = account('healthy@gmail.com')
+    const store = new InMemoryAccountStore(storage([acc1, acc2], 0))
+    const sessions = new AgySessionManager({ store })
+    await sessions.refreshLimits(await store.load(), { force: true, indices: [0] })
+
+    const after = await store.load()
+    expect(after.accounts[0]!.coolingDownUntil).toBeGreaterThan(Date.now())
+    expect(after.accounts[0]!.cooldownReason).toBe('quota-exhausted')
+    // Active index rotated away from cooling saura to healthy
+    expect(after.activeIndex).toBe(1)
+  })
 })
