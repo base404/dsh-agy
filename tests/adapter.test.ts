@@ -3,7 +3,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { GenerateOptions, Message } from '@deepseek-ai/dsh-llm'
-import { AGY_CLAUDE_MAX_OUTPUT_TOKENS, AGY_SCHEMA_ALLOWLIST, toAgyRequestBody } from '../src/adapter/translate.ts'
+import { AGY_CLAUDE_MAX_OUTPUT_TOKENS, AGY_SCHEMA_ALLOWLIST, isFixedThinkingModel, toAgyRequestBody } from '../src/adapter/translate.ts'
 import {
   DEFAULT_STREAM_IDLE_TIMEOUT_MS,
   parseAgySse,
@@ -529,6 +529,25 @@ describe('translate', () => {
     })
   })
 
+  it('deduplicates when options.system matches one of multiple system messages in history and deduplicates within history', () => {
+    const messages = [
+      { id: 's1', role: 'system', content: [{ type: 'text', text: 'Base instructions.' }] },
+      { id: 's2', role: 'system', content: [{ type: 'text', text: 'Remember to be concise.' }] },
+      { id: 's3', role: 'system', content: [{ type: 'text', text: 'Remember to be concise.' }] },
+      { id: 'u', role: 'user', content: [{ type: 'text', text: 'hello' }] },
+    ]
+    const body = toAgyRequestBody(
+      generateOptions({
+        system: 'Base instructions.',
+        messages: messages as unknown as GenerateOptions['messages'],
+      }),
+      {},
+    )
+    expect(body.request.systemInstruction).toEqual({
+      parts: [{ text: 'Base instructions.\n\nRemember to be concise.' }],
+    })
+  })
+
   it('skips a developer message: tool bookkeeping is not a conversation turn', () => {
     const messages = [
       { id: 'd', role: 'developer', content: [{ type: 'tool-addition', toolName: 'read' }] },
@@ -583,6 +602,49 @@ describe('translate', () => {
     const gemini = toAgyRequestBody(generateOptions({ model: 'gemini-3.8-flash-tiered', messages }), {})
     expect(gemini.request.contents[1]!.parts).toEqual([
       { text: 'answer' },
+    ])
+  })
+
+  it('preserves thoughtSignatures and parallel tool-calls when historical reasoning is stripped', () => {
+    const messages = [
+      { id: 'u1', role: 'user' as const, content: [{ type: 'text' as const, text: 'fetch info' }] },
+      { id: 'a1', role: 'assistant' as const, content: [
+        { type: 'reasoning' as const, text: 'I will call search and calculator tools in parallel.' },
+        { type: 'tool-call' as const, id: 'call-1', name: 'search', arguments: '{"q":"weather"}' },
+        { type: 'tool-call' as const, id: 'call-2', name: 'calc', arguments: '{"expr":"2+2"}' },
+      ]},
+      { id: 't1', role: 'tool' as const, toolCallId: 'call-1', content: [{ type: 'text' as const, text: 'sunny' }] },
+      { id: 't2', role: 'tool' as const, toolCallId: 'call-2', content: [{ type: 'text' as const, text: '4' }] },
+      { id: 'u2', role: 'user' as const, content: [{ type: 'text' as const, text: 'continue' }] },
+    ]
+    const gemini = toAgyRequestBody(generateOptions({ model: 'gemini-3.8-flash-tiered', messages }), {})
+    // Model turn has reasoning stripped, both functionCall parts preserved with thoughtSignature
+    expect(gemini.request.contents[1]!.parts).toEqual([
+      {
+        thoughtSignature: 'skip_thought_signature_validator',
+        functionCall: { id: 'call-1', name: 'search', args: { q: 'weather' } },
+      },
+      {
+        thoughtSignature: 'skip_thought_signature_validator',
+        functionCall: { id: 'call-2', name: 'calc', args: { expr: '2+2' } },
+      },
+    ])
+    // Tool result turns coalesce into one functionResponse turn
+    expect(gemini.request.contents[2]!.parts).toEqual([
+      { functionResponse: { id: 'call-1', name: 'search', response: { result: 'sunny', is_error: false } } },
+      { functionResponse: { id: 'call-2', name: 'calc', response: { result: '4', is_error: false } } },
+    ])
+
+    const claude = toAgyRequestBody(generateOptions({ model: 'claude-opus-4-6-thinking', messages }), {})
+    expect(claude.request.contents[1]!.parts).toEqual([
+      {
+        thoughtSignature: 'skip_thought_signature_validator',
+        functionCall: { id: 'call-1', name: 'search', args: { q: 'weather' } },
+      },
+      {
+        thoughtSignature: 'skip_thought_signature_validator',
+        functionCall: { id: 'call-2', name: 'calc', args: { expr: '2+2' } },
+      },
     ])
   })
 
@@ -2080,6 +2142,38 @@ describe('models', () => {
       { thinkingBudgetFor: budgetFor },
     )
     expect(idBound.request.generationConfig?.thinkingConfig).toBeUndefined()
+  })
+
+  it('correctly classifies fixed-thinking models and excludes Claude or level-thinking models', () => {
+    // Fixed thinking models in catalog
+    expect(isFixedThinkingModel('gemini-3.6-flash-high')).toBe(true)
+    expect(isFixedThinkingModel('gemini-pro-agent')).toBe(true)
+    expect(isFixedThinkingModel('gemini-2.5-flash-thinking')).toBe(true)
+    expect(isFixedThinkingModel('gemini-4-argon-high')).toBe(true)
+    expect(isFixedThinkingModel('gpt-oss-120b-medium')).toBe(true)
+
+    // Uncataloged model with fixed-thinking suffix
+    expect(isFixedThinkingModel('gemini-future-agent')).toBe(true)
+    expect(isFixedThinkingModel('gemini-future-thinking')).toBe(true)
+
+    // Level thinking models must return false
+    expect(isFixedThinkingModel('gemini-3.8-flash-tiered')).toBe(false)
+    expect(isFixedThinkingModel('gemini-3.7-flash-tiered')).toBe(false)
+    expect(isFixedThinkingModel('gemini-3.1-pro-low')).toBe(false)
+
+    // Claude models must return false (handled through Claude path)
+    expect(isFixedThinkingModel('claude-opus-4-6-thinking')).toBe(false)
+    expect(isFixedThinkingModel('claude-sonnet-4-6')).toBe(false)
+
+    // Non-reasoning models must return false
+    expect(isFixedThinkingModel('gemini-2.5-pro')).toBe(false)
+    expect(isFixedThinkingModel('gemini-2.5-flash')).toBe(false)
+    expect(isFixedThinkingModel('gemini-3.5-flash-lite')).toBe(false)
+
+    // Non-string or malformed inputs
+    expect(isFixedThinkingModel(undefined as any)).toBe(false)
+    expect(isFixedThinkingModel(null as any)).toBe(false)
+    expect(isFixedThinkingModel('' as any)).toBe(false)
   })
 
   it('turns the Default effort into Max when a tiered budget is set', () => {

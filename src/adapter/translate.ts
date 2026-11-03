@@ -532,11 +532,12 @@ const LEVEL_THINKING_LEVELS = new Set(['low', 'medium', 'high'])
  * Excludes Claude models (handled separately) and level-thinking models.
  */
 export function isFixedThinkingModel(modelId: string): boolean {
+  if (typeof modelId !== 'string') return false
   if (isClaudeModel(modelId)) return false
   if (isLevelThinkingModel(modelId)) return false
   const cat = catalogModel(modelId)
   if (cat?.supportsReasoning) return true
-  return typeof modelId === 'string' && /-(?:high|medium|low|thinking|agent)$/.test(modelId)
+  return /-(?:high|medium|low|thinking|agent)$/.test(modelId)
 }
 
 /**
@@ -668,16 +669,30 @@ export function toAgyRequestBody(
   // the system slot; routing the message through `contents` instead would put
   // the system prompt on the wire as a USER turn.
   // Deduplicate identical system instructions between options.system and messages
-  // so identical system prompts are not doubled.
+  // (and across repeated system messages in history) so system prompts are not doubled.
   const fromMessages = systemTextFromMessages(messages)
   const systemText = (() => {
     const opt = typeof options.system === 'string' && options.system.trim() !== '' ? options.system : undefined
     const msg = typeof fromMessages === 'string' && fromMessages.trim() !== '' ? fromMessages : undefined
-    if (opt && msg) {
-      if (opt.trim() === msg.trim()) return opt
-      return `${opt}\n\n${msg}`
+    if (opt && msg && opt.trim() === msg.trim()) return opt
+
+    const systemParts: string[] = []
+    const seen = new Set<string>()
+    const addPart = (rawText: unknown) => {
+      if (typeof rawText !== 'string') return
+      const trimmed = rawText.trim()
+      if (trimmed === '' || seen.has(trimmed)) return
+      seen.add(trimmed)
+      systemParts.push(rawText)
     }
-    return opt ?? msg ?? ''
+    if (opt) addPart(opt)
+    for (const m of messages) {
+      if (m.role !== 'system') continue
+      for (const b of m.content) {
+        if (b.type === 'text') addPart(b.text)
+      }
+    }
+    return systemParts.join('\n\n')
   })()
 
   const tools = toolsToDeclarations(options.tools)
