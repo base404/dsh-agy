@@ -1283,8 +1283,27 @@ describe('parseAgySse', () => {
     const usages = chunks.filter((c) => (c as { type: string }).type === 'usage')
     expect(usages).toHaveLength(1)
     expect(usages[0]).toMatchObject({ usage: { inputTokens: 8, outputTokens: 6, cacheReadTokens: 2 } })
+    expect((usages[0] as any).usage.totalTokens).toBeUndefined()
     const finish = chunks[chunks.length - 1]
     expect(finish).toMatchObject({ type: 'finish' })
+  })
+
+  it('forwards totalTokens in usage chunk when totalTokenCount is provided', async () => {
+    const chunks = await collect(parseAgySse(sseStream([
+      'data: [{"candidates":[{"content":{"parts":[{"text":"Hi"}]}}],"usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":4,"cachedContentTokenCount":2,"totalTokenCount":16}}]',
+      'data: [DONE]',
+    ])))
+    const usages = chunks.filter((c) => (c as { type: string }).type === 'usage')
+    expect(usages).toHaveLength(1)
+    expect(usages[0]).toEqual({
+      type: 'usage',
+      usage: {
+        inputTokens: 10,
+        outputTokens: 4,
+        cacheReadTokens: 2,
+        totalTokens: 16,
+      },
+    })
   })
 
   it('emits reasoning deltas for thought parts', async () => {

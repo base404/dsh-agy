@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { EnvHttpProxyAgent, ProxyAgent, request } from 'undici'
 import { createServer, type AddressInfo, type Socket } from 'node:net'
-import { proxiedFetch, proxyAgent, proxyStreamingAgent, dispatcherForAsync, dispatcherOptsFor, normalizeProxyUrl, proxyUrlForLogs, _clearDispatcherCacheForTest } from '../src/proxy.ts'
+import { proxiedFetch, proxyAgent, proxyStreamingAgent, dispatcherForAsync, dispatcherOptsFor, normalizeProxyUrl, proxyUrlForLogs, _clearDispatcherCacheForTest, DISPATCHER_CACHE_CAP } from '../src/proxy.ts'
 
 describe('proxy env support', () => {
   afterEach(() => {
@@ -73,6 +73,32 @@ describe('streaming dispatcher (issue #29 5)', () => {
     expect(await dispatcherForAsync(undefined, { streaming: true })).toBe(proxyStreamingAgent)
     expect(proxyStreamingAgent).not.toBe(proxyAgent)
     expect(proxyStreamingAgent).toBeInstanceOf(EnvHttpProxyAgent)
+  })
+
+  it('evicts oldest entries when cache cap is exceeded and calls destroy()', async () => {
+    const dispatchers: any[] = []
+    for (let i = 0; i < DISPATCHER_CACHE_CAP; i++) {
+      const d = await dispatcherForAsync(`http://127.0.0.1:${1000 + i}`)
+      vi.spyOn(d, 'destroy')
+      dispatchers.push(d)
+    }
+
+    // Cache is now full at DISPATCHER_CACHE_CAP (16)
+    // Accessing index 0 refreshes its LRU order
+    await dispatcherForAsync(`http://127.0.0.1:1000`)
+
+    // Adding 17th entry should evict index 1 (the oldest un-refreshed entry)
+    const newDispatcher = await dispatcherForAsync(`http://127.0.0.1:9999`)
+    expect(newDispatcher).toBeDefined()
+
+    // index 0 was refreshed, so its destroy was NOT called
+    expect(dispatchers[0].destroy).not.toHaveBeenCalled()
+    // index 1 was the oldest, so its destroy WAS called
+    expect(dispatchers[1].destroy).toHaveBeenCalled()
+
+    // _clearDispatcherCacheForTest destroys all remaining cached entries
+    _clearDispatcherCacheForTest()
+    expect(dispatchers[0].destroy).toHaveBeenCalled()
   })
 })
 describe('proxy credential encoding (special characters)', () => {

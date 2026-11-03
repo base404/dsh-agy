@@ -21,7 +21,7 @@
  *   ({@link UnmappedFinishReasonError}).
  */
 
-import type { FinishReason, StreamChunk } from '@deepseek-ai/dsh-llm'
+import type { FinishReason, StreamChunk, TokenUsage } from '@deepseek-ai/dsh-llm'
 import * as DshLlm from '@deepseek-ai/dsh-llm'
 
 // ponytail: DSH 0.0.1-rc.1 exports CallId, 0.1.x renames to ToolCallId — pick whichever exists at runtime
@@ -281,7 +281,7 @@ export async function* parseAgySse(
   let sawDone = false
   let sawFinishReason = false
   let sawUsage = false
-  let lastUsage: { inputTokens: number; outputTokens: number; cacheReadTokens?: number } | null = null
+  let lastUsage: TokenUsage | null = null
 
   interface OpenBlock {
     kind: 'text' | 'reasoning' | 'tool-call'
@@ -386,10 +386,12 @@ export async function* parseAgySse(
       // uncached + cacheRead + cacheWrite).
       const promptTokens = payload.usageMetadata.promptTokenCount ?? 0
       const cachedTokens = payload.usageMetadata.cachedContentTokenCount ?? 0
+      const totalTokens = payload.usageMetadata.totalTokenCount
       lastUsage = {
         inputTokens: Math.max(0, promptTokens - cachedTokens),
         outputTokens: payload.usageMetadata.candidatesTokenCount ?? 0,
         cacheReadTokens: cachedTokens,
+        ...(totalTokens !== undefined ? { totalTokens } : {}),
       }
     }
     for (const candidate of payload.candidates ?? []) {

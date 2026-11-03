@@ -28,10 +28,24 @@ export const proxyAgent = envAgent
 export const proxyStreamingAgent = envStreamingAgent
 
 // ── Dispatcher cache, keyed `normalizedProxyUrl|stream` ──
-// Entries live for the process, so the cache size tracks the number of DISTINCT
-// proxy URLs in use rather than the account count. (It previously claimed to be
-// "bounded by MAX_ACCOUNTS=10" — a constant nothing enforced.)
+// Bounded LRU cache (max 16 entries). Undici dispatchers maintain TCP connection pools,
+// timers, and DNS caches. When an entry is evicted, its `destroy()` method is called
+// to prevent socket/memory leaks in long-running processes.
+export const DISPATCHER_CACHE_CAP = 16
 const dispatcherCache = new Map<string, any>()
+
+function safelyDestroyDispatcher(dispatcher: any): void {
+  if (dispatcher && typeof dispatcher.destroy === 'function') {
+    try {
+      const res = dispatcher.destroy()
+      if (res && typeof res.catch === 'function') {
+        res.catch(() => {})
+      }
+    } catch {
+      // ignore destruction errors
+    }
+  }
+}
 
 // ── Proxy URL normalization ──
 const SUPPORTED = new Set(['http:', 'https:', 'socks5:', 'socks5h:'])
@@ -325,13 +339,29 @@ export async function dispatcherForAsync(
   const normalized = normalizeProxyUrl(proxyUrl)
   const key = dispatcherCacheKey(normalized, streaming)
   const cached = dispatcherCache.get(key)
-  if (cached) return cached
+  if (cached) {
+    // Re-insert to refresh LRU order (most recently used at the end)
+    dispatcherCache.delete(key)
+    dispatcherCache.set(key, cached)
+    return cached
+  }
   const dispatcher = createHttpDispatcher(normalized, dispatcherOptsFor(streaming) as any)
+  if (dispatcherCache.size >= DISPATCHER_CACHE_CAP) {
+    const oldestKey = dispatcherCache.keys().next().value
+    if (oldestKey !== undefined) {
+      const evicted = dispatcherCache.get(oldestKey)
+      dispatcherCache.delete(oldestKey)
+      safelyDestroyDispatcher(evicted)
+    }
+  }
   dispatcherCache.set(key, dispatcher)
   return dispatcher
 }
 
 export function _clearDispatcherCacheForTest(): void {
+  for (const dispatcher of dispatcherCache.values()) {
+    safelyDestroyDispatcher(dispatcher)
+  }
   dispatcherCache.clear()
 }
 
