@@ -355,6 +355,33 @@ describe('usage ledger', () => {
     expect(store.pendingCount).toBe(0)
     expect(JSON.parse(readFileSync(file, 'utf8')).totals.requests).toBe(1)
   })
+
+  it('tracks lastModelUsedAt and falls back to account snapshot on cold restart', () => {
+    const { dir } = scratch()
+    const file = join(dir, 'agy-stats.json')
+    const t0 = 1700000000000
+    const store = new UsageStats({
+      file,
+      lock: noopStatsLock,
+      now: () => t0,
+      flushEvery: 1,
+      flushIntervalMs: 0,
+    })
+    expect(store.getLastModelUsedAt()).toBeNull()
+
+    store.record({ source: 'chat', ok: true, account: 'acc1', model: 'gemini-2.5-flash' })
+    expect(store.getLastModelUsedAt()).toBe(t0)
+    store.flushSync()
+
+    // Cold restart of a new UsageStats instance without records in memory
+    const restarted = new UsageStats({
+      file,
+      lock: noopStatsLock,
+      now: () => t0 + 10_000,
+    })
+    // Falls back to the persisted account snapshot
+    expect(restarted.getLastModelUsedAt()).toBe(t0)
+  })
 })
 
 describe('model visibility', () => {

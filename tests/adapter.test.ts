@@ -3286,9 +3286,34 @@ describe('AgyAdapter', () => {
     })
     await expect(async () => {
       for await (const _ of adapter.stream(generateOptions())) void _
-    }).rejects.toMatchObject({ code: 'QUOTA' })
+    }).rejects.toMatchObject({
+      code: 'QUOTA',
+      message: expect.stringContaining('(429): RESOURCE_EXHAUSTED'),
+    })
     expect(failures[0]?.kind).toBe('rate-limit')
     expect(failures[0]?.session.account.email).toBe('a@b.c')
+  })
+
+  it('preserves detailed error message and status code on rate limit', async () => {
+    const errorBody = JSON.stringify({
+      error: {
+        message: 'Rate limit exceeded for model',
+        status: 'RESOURCE_EXHAUSTED',
+        details: [{ violations: [{ description: 'Quota exceeded for project' }] }],
+      },
+    })
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(errorBody, { status: 429, headers: { 'retry-after': '5' } })))
+    const adapter = new AgyAdapter({
+      getSession: async () => session(),
+      reportFailure: async () => {},
+    })
+    await expect(async () => {
+      for await (const _ of adapter.stream(generateOptions())) void _
+    }).rejects.toMatchObject({
+      code: 'RATE_LIMIT',
+      message: expect.stringContaining('(429): Rate limit exceeded for model (Quota exceeded for project) [RESOURCE_EXHAUSTED]'),
+      failure: { providerRetryAfterMs: 5000 },
+    })
   })
 
   it('throws RATE_LIMIT with retry delay on soft/rate limits (harness retries)', async () => {

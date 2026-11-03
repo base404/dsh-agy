@@ -107,6 +107,7 @@ function makeHarness(options: {
       return options.inFlight ?? []
     },
     limitBurnRates: async () => options.limitBurn ?? [],
+    getLastModelUsedAt: () => null,
     // The real activateAccount writes through the store and clears affinity;
     // the stub mirrors its store contract so the RPC's bounds behavior is
     // exercised against the same persistence.

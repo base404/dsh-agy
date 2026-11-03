@@ -356,9 +356,15 @@ export function createAgyManagement(options: AgyManagementOptions): AgyManagemen
   }
 
   const methods: Record<AgyRpcMethod, (payload: unknown) => Promise<unknown>> = {
-    'account.list': async () => ({ accounts: await listAccounts() }),
+    'account.list': async () => ({
+      accounts: await listAccounts(),
+      lastModelUsedAt: sessions.getLastModelUsedAt?.() ?? stats.getLastModelUsedAt(),
+    }),
 
-    'pool.status': async () => ({ busy: await sessions.inFlightAccounts() }),
+    'pool.status': async () => ({
+      busy: await sessions.inFlightAccounts(),
+      lastModelUsedAt: sessions.getLastModelUsedAt?.() ?? stats.getLastModelUsedAt(),
+    }),
 
     'pool.recent': async () => ({ recent: recentRequests() }),
 

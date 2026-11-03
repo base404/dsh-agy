@@ -31,7 +31,7 @@ import { aliasVar, installAgyStyles } from './styles.ts'
 import { en, zh, type AgyLocaleKey } from './locales.ts'
 import { h } from './element.ts'
 import { AgyQuotaBadge } from './quota-badge.ts'
-import { accountQuotaRead, accountRecoveryTime, agoText, barColorFor, effectiveFraction, formatDetailedReset, formatQuotaReset, isAccountAllQuotaExhausted, limitsOlderThanInterval, stateLabel, untilText, windowLabel, MINUTE_MS } from './quota-view.ts'
+import { accountQuotaRead, accountRecoveryTime, agoText, barColorFor, effectiveFraction, formatDetailedReset, formatQuotaReset, isAccountAllQuotaExhausted, isSmartModeIdle, lastModelUsedTime, limitsOlderThanInterval, stateLabel, untilText, windowLabel, MINUTE_MS } from './quota-view.ts'
 import type { AccountView, AgyRpcClient, AgyRpcResult, ModelRoutingTarget, ModelRoutingView, ModelView, MultimodalView, StatsView, ThinkingBudgets, UiPrefsView } from '../rpc-contract.ts'
 import { CLAUDE_BUDGET_MAX, CLAUDE_BUDGET_MIN, THINKING_BUDGET_MAX, THINKING_BUDGET_MIN, THINKING_LEVELS } from '../thinking-types.ts'
 import { MULTIMODAL_DEFAULT_MB, MULTIMODAL_MAX_MB, MULTIMODAL_MIN_MB } from '../multimodal-types.ts'
@@ -1131,6 +1131,7 @@ function AccountsTab(props: {
    * poll already drives.
    */
   smartPausedUntil?: number | null
+  smartIdlePaused?: boolean
   onBadgePrefChange?: (enabled: boolean) => void
   onDetailedPrefChange?: (enabled: boolean) => void
 }): ReactNode {
@@ -1249,7 +1250,9 @@ function AccountsTab(props: {
               ? hint(t('smartPausedNote', {
                   time: formatDetailedReset('5h', new Date(props.smartPausedUntil).toISOString(), t, now) ?? '—',
                 }))
-              : null,
+              : props.smartIdlePaused
+                ? hint(t('smartIdlePausedNote'))
+                : null,
             h('div', { className: 'agy-rows' }, ...rows)),
           `${accounts.length}`),
         // `key` remounts the detail per account so its proxy draft cannot carry
@@ -2390,6 +2393,9 @@ export function AgySettings(props: {
   const smartModeRef = useRef(DEFAULT_SMART_MODE)
   const [smartPausedUntil, setSmartPausedUntil] = useState<number | null>(null)
   const smartPausedUntilRef = useRef<number | null>(null)
+  const lastModelUsedRef = useRef<number | null>(null)
+  const [smartIdlePaused, setSmartIdlePaused] = useState<boolean>(false)
+  const smartIdlePausedRef = useRef<boolean>(false)
   useEffect(() => {
     installAgyStyles()
     void rpc.call('ui.prefs.get', {}).then((prefs) => {
@@ -2405,9 +2411,15 @@ export function AgySettings(props: {
         setQuotaRefreshMinutes(detail.quotaRefreshMinutes)
         // Smart pause is scoped to the interval being on: with "never" there is
         // no timer left to re-open a pause, so it ends here.
-        if (detail.quotaRefreshMinutes === null && smartPausedUntilRef.current !== null) {
-          smartPausedUntilRef.current = null
-          setSmartPausedUntil(null)
+        if (detail.quotaRefreshMinutes === null) {
+          if (smartPausedUntilRef.current !== null) {
+            smartPausedUntilRef.current = null
+            setSmartPausedUntil(null)
+          }
+          if (smartIdlePausedRef.current) {
+            smartIdlePausedRef.current = false
+            setSmartIdlePaused(false)
+          }
         }
       }
       if (typeof detail?.smartMode === 'boolean' && alive.current) {
@@ -2520,7 +2532,14 @@ export function AgySettings(props: {
       rpc.call('stats.get', {}),
     ])
     if (!alive.current) return
-    if (accountOutcome.status === 'fulfilled') setAccounts(accountOutcome.value.accounts)
+    if (accountOutcome.status === 'fulfilled') {
+      setAccounts(accountOutcome.value.accounts)
+      if (accountOutcome.value.lastModelUsedAt) {
+        lastModelUsedRef.current = accountOutcome.value.lastModelUsedAt
+      } else if (lastModelUsedRef.current === null) {
+        lastModelUsedRef.current = lastModelUsedTime(accountOutcome.value.accounts)
+      }
+    }
     if (statsOutcome.status === 'fulfilled') setStats(statsOutcome.value)
     // Surface a failure, but only after committing the successful halves, so a
     // partial failure still renders everything it can.
@@ -2563,14 +2582,26 @@ export function AgySettings(props: {
     // mount/tab effects that key on it) does not churn on every prefs save.
     const intervalMinutes = refreshMinutesRef.current
     // Smart pause holds BEFORE any RPC — a paused tick is free — and re-opens
-    // on the first tick at/after the recovery moment it was set from. Scoped
-    // to the interval being on: with "never" there is no timer left to re-open
+    // on the first tick at/after the recovery moment it was set from or when a model is reused.
+    // Scoped to the interval being on: with "never" there is no timer left to re-open
     // a pause, so smart mode stays inert there.
-    if (auto && smartModeRef.current && refreshMinutesRef.current !== null && smartPausedUntilRef.current !== null) {
-      const until = smartPausedUntilRef.current
-      if (Date.now() < until) return
-      smartPausedUntilRef.current = null
-      setSmartPausedUntil(null)
+    if (auto && smartModeRef.current && refreshMinutesRef.current !== null) {
+      if (smartPausedUntilRef.current !== null) {
+        const until = smartPausedUntilRef.current
+        if (Date.now() < until) return
+        smartPausedUntilRef.current = null
+        setSmartPausedUntil(null)
+      }
+      if (isSmartModeIdle(lastModelUsedRef.current, Date.now())) {
+        smartIdlePausedRef.current = true
+        setSmartIdlePaused(true)
+        return
+      }
+      if (smartIdlePausedRef.current) {
+        smartIdlePausedRef.current = false
+        setSmartIdlePaused(false)
+        force = true
+      }
     }
     try {
       const payload: { force?: boolean, index?: number } = force || index !== undefined
@@ -2667,13 +2698,41 @@ export function AgySettings(props: {
     const tick = (): void => {
       if (document.hidden) return
       void rpc.call('pool.status', {})
-        .then((result) => { if (alive.current) setPoolBusy(result.busy) })
+        .then((result) => {
+          if (alive.current) {
+            setPoolBusy(result.busy)
+            if (result.lastModelUsedAt) {
+              lastModelUsedRef.current = result.lastModelUsedAt
+              if (smartIdlePausedRef.current && !isSmartModeIdle(result.lastModelUsedAt, Date.now())) {
+                smartIdlePausedRef.current = false
+                setSmartIdlePaused(false)
+                const active = accountsRef.current.find((candidate) => candidate.active) ?? accountsRef.current[0]
+                void loadLimits(true, false, active?.index, true)
+                window.dispatchEvent(new CustomEvent('agy:model-used', { detail: { at: result.lastModelUsedAt } }))
+              }
+            }
+          }
+        })
         .catch(() => { /* display-only; the next tick retries */ })
     }
     tick()
+    const onModelUsed = (e: Event): void => {
+      const at = (e as CustomEvent<{ at?: number }>).detail?.at ?? Date.now()
+      lastModelUsedRef.current = at
+      if (smartIdlePausedRef.current) {
+        smartIdlePausedRef.current = false
+        setSmartIdlePaused(false)
+        const active = accountsRef.current.find((candidate) => candidate.active) ?? accountsRef.current[0]
+        void loadLimits(true, false, active?.index, true)
+      }
+    }
+    window.addEventListener('agy:model-used', onModelUsed)
     const timer = setInterval(tick, POOL_POLL_INTERVAL_MS)
-    return () => { clearInterval(timer) }
-  }, [rpc])
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener('agy:model-used', onModelUsed)
+    }
+  }, [loadLimits, rpc])
   useEffect(() => {
     // Only on the tab that shows them, and after the rows exist so the merge has
     // something to write into.
@@ -2718,6 +2777,10 @@ export function AgySettings(props: {
    * while the forced probe can take seconds, and the rows should not wait on it.
    */
   const refreshAll = useCallback(() => {
+    if (smartIdlePausedRef.current) {
+      smartIdlePausedRef.current = false
+      setSmartIdlePaused(false)
+    }
     void refresh()
     if (tab === 'accounts') void loadLimits(true, true)
   }, [loadLimits, refresh, tab])
@@ -2959,6 +3022,7 @@ export function AgySettings(props: {
       t,
       detailedQuotaReset,
       smartPausedUntil,
+      smartIdlePaused,
       onBadgePrefChange: props.onBadgePrefChange,
       onDetailedPrefChange: (enabled: boolean) => {
         setDetailedQuotaReset(enabled)

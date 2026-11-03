@@ -587,16 +587,15 @@ export class AgyAdapter extends LlmAdapter {
           reason: classified.kind,
         }, attemptStartedAt)
         if (classified.kind === 'rate-limit') {
-          // soft/rate limits are retryable by the harness (RATE_LIMIT + delay);
-          // daily quota exhaustion is terminal (QUOTA, 24h cooldown already set).
+          const detailMsg = classified.message || (bodyText ? bodyText.slice(0, 300) : '')
           if (classified.rateLimitCategory === 'quota_exhausted') {
             throw new LlmError(
-              `agy daily quota exhausted (${response.status}): ${classified.message ?? ''}`,
+              `agy daily quota exhausted (${response.status}): ${detailMsg}`.trim(),
               QUOTA_EXCEEDED_CODE,
             )
           }
           throw new LlmError(
-            `agy rate-limited (${response.status}): ${classified.message ?? ''}`,
+            `agy rate-limited (${response.status}): ${detailMsg}`.trim(),
             'RATE_LIMIT',
             {
               providerRetryAfterMs: classified.retryAfterMs ?? undefined,

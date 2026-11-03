@@ -10,6 +10,7 @@ import { refreshAccessToken } from './oauth/refresh.ts'
 import { accessTokenExpired, formatRefreshParts, parseRefreshParts } from './oauth/auth.ts'
 import type { AccountStore } from './store/accounts.ts'
 import {
+  FULL_QUOTA_COOLDOWN_MS,
   IN_FLIGHT_STALE_MS,
   MAX_IN_FLIGHT_PER_ACCOUNT,
   MAX_RATE_LIMIT_COOLDOWN_MS,
@@ -423,6 +424,14 @@ export class AgySessionManager {
   }
 
   /**
+   * Drop the affinity pin for one conversation.
+   */
+  clearAffinityForConversation(conversationKey?: string): void {
+    const key = this.conversationKeyFor(conversationKey)
+    this.affinity.delete(key)
+  }
+
+  /**
    * Clear all session affinity pins.
    *
    * Called when an account is explicitly activated by the user, so all
@@ -431,6 +440,18 @@ export class AgySessionManager {
    */
   clearAllAffinity(): void {
     this.affinity.clear()
+  }
+
+  private _lastModelUsedAt: number | null = null
+
+  /** Timestamp (epoch ms) when an Antigravity model was last used. */
+  getLastModelUsedAt(): number | null {
+    return this._lastModelUsedAt
+  }
+
+  /** Record that an Antigravity model was just used. */
+  recordModelUsed(now = Date.now()): void {
+    this._lastModelUsedAt = now
   }
 
   /**
@@ -926,6 +947,7 @@ export class AgySessionManager {
           return { account: last, index: lastIndex }
         }
       }
+      this.clearAffinityForConversation(conversationKey)
     }
     const eligible = storage.accounts
       .map((account, index) => ({ account, index }))
@@ -1146,7 +1168,10 @@ export class AgySessionManager {
 
       // A pinned (test) call must not touch the affinity pin: probing an account
       // is not "using" it, and pinning would steer the next real conversation.
-      if (accountIndex === undefined) this.setAffinity(conversationKey, key, Date.now())
+      if (accountIndex === undefined) {
+        this.setAffinity(conversationKey, key, Date.now())
+        this.recordModelUsed(Date.now())
+      }
       return {
         auth,
         account: picked.account,
@@ -1251,11 +1276,12 @@ export class AgySessionManager {
       ? (fpCachedVersion ?? (await resolveAntigravityVersionBounded(750, probeFetch(session.account.proxy))) ?? currentAgyVersion())
       : currentAgyVersion()
 
+    this.recordModelUsed(Date.now())
     await this.store.mutate((storage) => {
       const account = storage.accounts.find((a) => this.accountKey(a) === key)
       if (!account) return
 
-      const decision = decideRotation(kind, account, consecutive, info?.retryAfterMs, info?.rateLimitCategory, info?.resetTime)
+      const decision = decideRotation(kind, account, consecutive, info?.retryAfterMs, info?.rateLimitCategory, info?.resetTime, info?.model)
 
       // Keep the appeal link beside the challenge state so a user can act on it.
       // Only overwritten when the upstream actually supplied one, so a later
@@ -1269,7 +1295,7 @@ export class AgySessionManager {
         // Soft rate limits are transient bursts handled via immediate retry — do not block the family.
         const familyKey = familyKeyOf(info?.model)
         const resetMs = parseFutureResetMs(info?.resetTime, Date.now()) ??
-          (Date.now() + Math.min(info?.retryAfterMs ?? RATE_LIMIT_COOLDOWN_MS, MAX_RATE_LIMIT_COOLDOWN_MS))
+          (Date.now() + (info?.rateLimitCategory === 'quota_exhausted' ? FULL_QUOTA_COOLDOWN_MS : Math.min(info?.retryAfterMs ?? RATE_LIMIT_COOLDOWN_MS, MAX_RATE_LIMIT_COOLDOWN_MS)))
         recordRateLimit(account, familyKey, resetMs)
       }
 
@@ -1356,6 +1382,7 @@ export class AgySessionManager {
     const account = session.account
     const key = this.accountKey(account)
     this.failureCounts.delete(key)
+    this.recordModelUsed(Date.now())
   }
 
   /**

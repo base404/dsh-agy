@@ -22,7 +22,10 @@ import {
   isAccountAllQuotaExhausted,
   isAccountQuotaExhausted,
   isGroupQuotaExhausted,
+  isSmartModeIdle,
+  lastModelUsedTime,
   limitsOlderThanInterval,
+  SMART_MODE_IDLE_TIMEOUT_MS,
   modelLabelForGroup,
   nextHealthyIndex,
   pickBadgeQuota,
@@ -807,6 +810,31 @@ describe('smart pause verdicts', () => {
 
     // An empty pool has no subject and pauses nothing.
     expect(smartQuotaVerdict([], NOW)).toEqual({ index: null, exhausted: false, recoverAt: null })
+  })
+
+  describe('smart mode idle pause (5 minutes)', () => {
+    it('treats null/undefined lastUsedAt as idle', () => {
+      expect(isSmartModeIdle(null, NOW)).toBe(true)
+      expect(isSmartModeIdle(undefined, NOW)).toBe(true)
+    })
+
+    it('treats requests older than 5 minutes as idle', () => {
+      expect(isSmartModeIdle(NOW - SMART_MODE_IDLE_TIMEOUT_MS, NOW)).toBe(true)
+      expect(isSmartModeIdle(NOW - SMART_MODE_IDLE_TIMEOUT_MS - 1000, NOW)).toBe(true)
+    })
+
+    it('treats requests within 5 minutes as active (not idle)', () => {
+      expect(isSmartModeIdle(NOW - SMART_MODE_IDLE_TIMEOUT_MS + 1000, NOW)).toBe(false)
+      expect(isSmartModeIdle(NOW, NOW)).toBe(false)
+    })
+
+    it('extracts latest lastUsedTime across account rows', () => {
+      expect(lastModelUsedTime([])).toBeNull()
+      const a1 = { usage: { lastUsedAt: NOW - 10_000 } } as AccountView
+      const a2 = { usage: { lastUsedAt: NOW - 5_000 } } as AccountView
+      const a3 = { usage: null } as AccountView
+      expect(lastModelUsedTime([a1, a2, a3])).toBe(NOW - 5_000)
+    })
   })
 })
 

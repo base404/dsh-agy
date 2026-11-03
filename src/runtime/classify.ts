@@ -164,6 +164,58 @@ function parseRetryAfter(header: string | null): number | undefined {
   return undefined
 }
 
+/** Extract a detailed, human-readable error message from an upstream JSON or text body. */
+export function extractErrorMessage(bodyText: string | undefined): string | undefined {
+  if (!bodyText) return undefined
+  try {
+    const data = JSON.parse(bodyText) as {
+      error?: {
+        message?: string
+        status?: string
+        details?: Array<{
+          '@type'?: string
+          reason?: string
+          violations?: Array<{ description?: string; subject?: string }>
+          metadata?: Record<string, string>
+        }>
+      } | string
+      message?: string
+    }
+    if (typeof data.error === 'string') {
+      return data.error
+    }
+    if (data.error?.message) {
+      let extra = ''
+      if (Array.isArray(data.error.details)) {
+        const descriptions: string[] = []
+        for (const d of data.error.details) {
+          if (Array.isArray(d.violations)) {
+            for (const v of d.violations) {
+              if (v.description) descriptions.push(v.description)
+            }
+          }
+          if (d.reason) {
+            const limit = d.metadata?.quota_limit ?? d.metadata?.consumer
+            descriptions.push(limit ? `${d.reason}: ${limit}` : d.reason)
+          }
+        }
+        if (descriptions.length > 0) {
+          extra = ` (${descriptions.join('; ')})`
+        }
+      }
+      const statusSuffix = data.error.status ? ` [${data.error.status}]` : ''
+      return `${data.error.message}${extra}${statusSuffix}`
+    }
+    if (data.error?.status) {
+      return data.error.status
+    }
+    if (data.message) return data.message
+  } catch {
+    // not JSON
+  }
+  return bodyText.length > 300 ? bodyText.slice(0, 300) : bodyText
+}
+
 /** Classify a completed HTTP response (non-2xx). */
 export function classifyHttpError(
   status: number,
@@ -172,6 +224,7 @@ export function classifyHttpError(
 ): ClassifiedError {
   const retryAfterMs = parseRetryAfter(headers.get('retry-after'))
   const resetTime = extractResetTime(bodyText)
+  const message = extractErrorMessage(bodyText)
 
   if (status === 429) {
     const category = classifyRateLimit(bodyText, retryAfterMs)
@@ -181,11 +234,11 @@ export function classifyHttpError(
       status,
       retryAfterMs,
       resetTime,
-      message: bodyText ? bodyText.slice(0, 200) : undefined,
+      message,
     }
   }
   if (status === 401) {
-    return { kind: 'auth-failure', status, message: bodyText ? bodyText.slice(0, 200) : undefined }
+    return { kind: 'auth-failure', status, message }
   }
   if (status === 403) {
     // A verification wall is its own signal, checked BEFORE the auth-failure
@@ -198,7 +251,7 @@ export function classifyHttpError(
         kind: 'verification-required',
         status,
         verificationUrl: extractVerificationUrl(bodyText),
-        message: bodyText ? bodyText.slice(0, 200) : undefined,
+        message,
       }
     }
     // Google also reports quota walls as 403 RESOURCE_EXHAUSTED, and the
@@ -214,7 +267,7 @@ export function classifyHttpError(
         kind: 'rate-limit',
         rateLimitCategory: category,
         status,
-        message: bodyText ? bodyText.slice(0, 200) : undefined,
+        message,
       }
     }
     // An HTML response (from autopush sandbox "no license" or an intermediary gateway)
@@ -227,14 +280,14 @@ export function classifyHttpError(
         message: bodyText.slice(0, 200),
       }
     }
-    return { kind: 'auth-failure', status, message: bodyText ? bodyText.slice(0, 200) : undefined }
+    return { kind: 'auth-failure', status, message }
   }
   if (status === 404) {
     // Model/route missing — nothing to rotate for; surface as transient request error.
-    return { kind: 'transient', status, message: bodyText ? bodyText.slice(0, 200) : undefined }
+    return { kind: 'transient', status, message }
   }
   if (status >= 500) {
-    return { kind: 'transient', status, retryAfterMs, message: bodyText ? bodyText.slice(0, 200) : undefined }
+    return { kind: 'transient', status, retryAfterMs, message }
   }
   if (status === 400) {
     // A 400 is a request-construction error (permanent — retrying sends the
@@ -248,12 +301,12 @@ export function classifyHttpError(
       || (text.includes('model') && (text.includes('not found') || text.includes('unavailable') || text.includes('not supported')))
     )
     if (recoverable) {
-      return { kind: 'transient', status, message: bodyText ? bodyText.slice(0, 200) : undefined }
+      return { kind: 'transient', status, message }
     }
-    return { kind: 'request-error', status, message: bodyText ? bodyText.slice(0, 200) : undefined }
+    return { kind: 'request-error', status, message }
   }
   // 400-range others (401 handled above): request-level errors, no rotation semantics.
-  return { kind: 'transient', status, message: bodyText ? bodyText.slice(0, 200) : undefined }
+  return { kind: 'transient', status, message }
 }
 
 /**

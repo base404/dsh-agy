@@ -208,6 +208,84 @@ describe('AgySessionManager', () => {
     expect(second!.index).toBe(1)
   })
 
+  it('drops session affinity when the pinned account quota is exhausted for the requested model', async () => {
+    stubTokenEndpoint()
+    const acc0 = account('a@x')
+    const acc1 = account('b@x')
+    const store = new InMemoryAccountStore(storage([acc0, acc1], 0))
+    const sessions = new AgySessionManager({ store })
+
+    // Conversation starts on account 0
+    const first = await sessions.getSession('gemini-3-flash', undefined, 'chat-exhausted')
+    expect(first!.index).toBe(0)
+
+    // Account 0 runs out of Gemini quota (cachedLimits has 0% for Gemini)
+    await store.mutate((s) => {
+      s.accounts[0]!.cachedLimits = {
+        updatedAt: Date.now(),
+        groups: [{
+          name: 'Gemini Models',
+          windows: [{
+            bucketId: 'gemini-5h',
+            window: '5h',
+            remainingFraction: 0,
+            resetTime: new Date(Date.now() + 3600_000).toISOString(),
+          }],
+        }],
+      }
+    })
+
+    // Next turn in the same conversation detects quota exhaustion on pinned account and steers to usable account
+    const second = await sessions.getSession('gemini-3-flash', undefined, 'chat-exhausted')
+    expect(second!.index).toBe(1)
+  })
+
+  it('drops session affinity when cachedLimits uses unrecognized group name with recognized bucketId', async () => {
+    stubTokenEndpoint()
+    const acc0 = account('a@x')
+    const acc1 = account('b@x')
+    const store = new InMemoryAccountStore(storage([acc0, acc1], 0))
+    const sessions = new AgySessionManager({ store })
+
+    // Conversation starts on account 0
+    const first = await sessions.getSession('gemini-3-flash', undefined, 'chat-unrecognized-group')
+    expect(first!.index).toBe(0)
+
+    // Account 0 runs out of Gemini quota with an unrecognized group name upstream
+    await store.mutate((s) => {
+      s.accounts[0]!.cachedLimits = {
+        updatedAt: Date.now(),
+        groups: [{
+          name: 'Some Novel Google Group',
+          windows: [{
+            bucketId: 'gemini-5h',
+            window: '5h',
+            remainingFraction: 0,
+            resetTime: new Date(Date.now() + 3600_000).toISOString(),
+          }],
+        }],
+      }
+    })
+
+    // Next turn recognizes the gemini-5h bucketId and drops affinity
+    const second = await sessions.getSession('gemini-3-flash', undefined, 'chat-unrecognized-group')
+    expect(second!.index).toBe(1)
+  })
+
+  it('tracks lastModelUsedAt across requests and failures', async () => {
+    stubTokenEndpoint()
+    const store = new InMemoryAccountStore(storage([account('a@x')], 0))
+    const sessions = new AgySessionManager({ store })
+    expect(sessions.getLastModelUsedAt()).toBeNull()
+
+    const before = Date.now()
+    const s = await sessions.getSession('gemini-3-flash', undefined, 'chat-used')
+    expect(sessions.getLastModelUsedAt()).toBeGreaterThanOrEqual(before)
+
+    sessions.markSuccess(s!)
+    expect(sessions.getLastModelUsedAt()).toBeGreaterThanOrEqual(before)
+  })
+
   it('recoverAccount lifts the cooldown and the family walls so the pool serves the account again', async () => {
     stubTokenEndpoint()
     const parked = {

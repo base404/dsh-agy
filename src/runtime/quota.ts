@@ -582,15 +582,203 @@ export function isFamilyQuotaExhausted(account: ManagedAccount, family?: ModelFa
   if (account.cooldownReason === 'quota-exhausted' && (account.coolingDownUntil ?? 0) > now) {
     return true
   }
-  const quota = familyQuotaFor(account, family)
-  if (!quota) return false
-  const spent = (fraction: number | undefined, resetTime: string | undefined, threshold = 0): boolean => {
-    if (typeof fraction !== 'number' || fraction > threshold || !resetTime) return false
-    const resetMs = parseFutureResetMs(resetTime, now)
-    return resetMs !== undefined && resetMs > now
+  if (family && (account.rateLimitResetTimes?.[family] ?? 0) > now) {
+    return true
   }
-  return spent(quota.remainingFraction, quota.resetTime, 0)
-    || spent(quota.weeklyFraction, quota.weeklyResetTime, WEEKLY_QUOTA_THRESHOLD)
+  const quota = familyQuotaFor(account, family)
+  const spent = (fraction: number | undefined, resetTime: string | undefined, threshold = 0): boolean => {
+    if (typeof fraction !== 'number' || fraction > threshold) return false
+    if (!resetTime) return true
+    const resetMs = parseFutureResetMs(resetTime, now)
+    return resetMs === undefined || resetMs > now
+  }
+  if (quota) {
+    if (spent(quota.remainingFraction, quota.resetTime, 0)
+      || spent(quota.weeklyFraction, quota.weeklyResetTime, WEEKLY_QUOTA_THRESHOLD)) {
+      return true
+    }
+  }
+
+  if (account.cachedLimits?.groups) {
+    for (const group of account.cachedLimits.groups) {
+      const groupFamilies = familiesForGroup(group)
+      const matches = !family || groupFamilies.includes(family)
+      if (matches) {
+        for (const window of group.windows) {
+          const isTracked = windowKind(window.window) !== undefined
+            || window.window.toLowerCase() === '5h'
+            || window.window.toLowerCase() === 'weekly'
+          if (!isTracked) continue
+          const fraction = window.remainingFraction
+          const threshold = window.window.toLowerCase() === 'weekly' ? WEEKLY_QUOTA_THRESHOLD : 0
+          if (typeof fraction === 'number' && fraction <= threshold) {
+            const resetMs = parseFutureResetMs(window.resetTime ?? undefined, now)
+            if (resetMs === undefined || resetMs > now) {
+              return true
+            }
+          }
+        }
+      }
+    }
+  }
+  return false
+}
+
+/**
+ * Whether ALL model groups/families on an account are exhausted or unavailable.
+ * Used to ensure an account only enters overall cooldown when no model family is left usable.
+ */
+export function areAllModelGroupsExhausted(
+  account: ManagedAccount,
+  failedModel?: string,
+  now = Date.now(),
+  failedResetMs?: number,
+): boolean {
+  if (account.enabled === false) return true
+  const failedFamily = modelFamilyOf(failedModel)
+
+  // 1. If cachedLimits has groups, check every group
+  if (account.cachedLimits?.groups && account.cachedLimits.groups.length > 0) {
+    return account.cachedLimits.groups.every((group) => {
+      const groupFamilies = familiesForGroup(group)
+      const coversFailed = failedFamily !== undefined && groupFamilies.includes(failedFamily)
+      if (coversFailed) return true
+
+      const hasSpentWindow = group.windows.some((w) => {
+        const isTracked = windowKind(w.window) !== undefined
+          || w.window.toLowerCase() === '5h'
+          || w.window.toLowerCase() === 'weekly'
+        if (!isTracked) return false
+        const threshold = w.window.toLowerCase() === 'weekly' ? WEEKLY_QUOTA_THRESHOLD : 0
+        if (typeof w.remainingFraction !== 'number' || w.remainingFraction > threshold) return false
+        const resetMs = parseFutureResetMs(w.resetTime ?? undefined, now)
+        return resetMs === undefined || resetMs > now
+      })
+      if (hasSpentWindow) return true
+
+      if (groupFamilies.length > 0) {
+        return groupFamilies.every((fam) => (account.rateLimitResetTimes?.[fam] ?? 0) > now)
+      }
+      return false
+    })
+  }
+
+  // 2. If cachedQuota has entries, check every family in cachedQuota
+  const quotas = account.cachedQuota
+  if (quotas && Object.keys(quotas).length > 0) {
+    return Object.entries(quotas).every(([fam, quota]) => {
+      if (failedFamily !== undefined && fam === failedFamily) return true
+      if ((account.rateLimitResetTimes?.[fam] ?? 0) > now) return true
+      const spent = (fraction: number | undefined, resetTime: string | undefined, threshold = 0): boolean => {
+        if (typeof fraction !== 'number' || fraction > threshold) return false
+        const resetMs = parseFutureResetMs(resetTime, now)
+        return resetMs === undefined || resetMs > now
+      }
+      return spent(quota.remainingFraction, quota.resetTime, 0)
+        || spent(quota.weeklyFraction, quota.weeklyResetTime, WEEKLY_QUOTA_THRESHOLD)
+    })
+  }
+
+  // 3. If cachedModels has entries
+  if (account.cachedModels && account.cachedModels.length > 0) {
+    const families = new Set(
+      account.cachedModels
+        .map((m) => modelFamilyOf(m))
+        .filter((f): f is ModelFamily => f !== undefined),
+    )
+    if (families.size > 0) {
+      return Array.from(families).every((fam) => {
+        if (failedFamily !== undefined && fam === failedFamily) return true
+        return (account.rateLimitResetTimes?.[fam] ?? 0) > now
+      })
+    }
+  }
+
+  // 4. Default: Antigravity known families are Google and Anthropic
+  if (failedModel !== undefined) {
+    const knownFamilies: ModelFamily[] = ['google', 'anthropic']
+    return knownFamilies.every((fam) => {
+      if (failedFamily === fam) return true
+      return (account.rateLimitResetTimes?.[fam] ?? 0) > now
+    })
+  }
+
+  return true
+}
+
+/**
+ * When the account will have quota again across all exhausted model groups/families.
+ * The account is back the moment its FIRST group recovers (earliest recovery time).
+ */
+export function computeAccountRecoveryTime(
+  account: ManagedAccount,
+  now = Date.now(),
+  failedResetMs?: number,
+  failedModel?: string,
+): number | null {
+  const failedFamily = modelFamilyOf(failedModel)
+  let earliest: number | null = null
+
+  const consider = (resetTime: number | undefined) => {
+    if (resetTime !== undefined && resetTime > now) {
+      if (earliest === null || resetTime < earliest) earliest = resetTime
+    }
+  }
+
+  // 1. Group windows
+  if (account.cachedLimits?.groups && account.cachedLimits.groups.length > 0) {
+    for (const group of account.cachedLimits.groups) {
+      const groupFamilies = familiesForGroup(group)
+      const coversFailed = failedFamily !== undefined && groupFamilies.includes(failedFamily)
+
+      let groupReset: number | null = null
+      for (const w of group.windows) {
+        if (typeof w.remainingFraction === 'number' && w.remainingFraction <= 0) {
+          const r = parseFutureResetMs(w.resetTime ?? undefined, now)
+          if (r !== undefined && (groupReset === null || r > groupReset)) {
+            groupReset = r
+          }
+        }
+      }
+
+      if (coversFailed) {
+        if (failedResetMs !== undefined && groupReset !== null) {
+          consider(Math.min(failedResetMs, groupReset))
+        } else if (groupReset !== null) {
+          consider(groupReset)
+        } else if (failedResetMs !== undefined) {
+          consider(failedResetMs)
+        }
+        continue
+      }
+
+      if (groupReset !== null) {
+        consider(groupReset)
+      } else if (groupFamilies.length > 0 && account.rateLimitResetTimes) {
+        for (const fam of groupFamilies) {
+          consider(account.rateLimitResetTimes[fam])
+        }
+      }
+    }
+  }
+
+  // 2. Family rate limits
+  if (failedResetMs !== undefined) consider(failedResetMs)
+  if (account.rateLimitResetTimes) {
+    for (const r of Object.values(account.rateLimitResetTimes)) {
+      consider(r)
+    }
+  }
+
+  // 3. CachedQuota reset times
+  if (account.cachedQuota) {
+    for (const q of Object.values(account.cachedQuota)) {
+      consider(parseFutureResetMs(q.resetTime, now))
+      consider(parseFutureResetMs(q.weeklyResetTime, now))
+    }
+  }
+
+  return earliest
 }
 
 /**
@@ -714,6 +902,25 @@ export function rankPoolCandidates(
         : undefined
       if (weeklyResetMs !== undefined) {
         blockedUntil = blockedUntil === null ? weeklyResetMs : Math.max(blockedUntil, weeklyResetMs)
+      }
+    }
+
+    if (blockedUntil === null && account.cachedLimits?.groups) {
+      for (const group of account.cachedLimits.groups) {
+        const groupFamilies = familiesForGroupName(group.name)
+        const matches = !family
+          || groupFamilies.includes(family)
+          || group.windows.some((w) => familiesForBucketId(w.window).includes(family))
+        if (matches) {
+          for (const window of group.windows) {
+            if (typeof window.remainingFraction === 'number' && window.remainingFraction <= 0) {
+              const resetMs = parseFutureResetMs(window.resetTime ?? undefined, now)
+              if (resetMs !== undefined) {
+                blockedUntil = blockedUntil === null ? resetMs : Math.max(blockedUntil, resetMs)
+              }
+            }
+          }
+        }
       }
     }
 

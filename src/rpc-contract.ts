@@ -231,7 +231,7 @@ export interface ImportResult {
 
 /** Methods and their payload/result shapes. */
 export interface AgyRpcMethods {
-  'account.list': { payload: Record<string, never>; result: { accounts: AccountView[] } }
+  'account.list': { payload: Record<string, never>; result: { accounts: AccountView[]; lastModelUsedAt?: number | null } }
   /**
    * Which accounts have upstream requests in flight right now.
    *
@@ -243,6 +243,7 @@ export interface AgyRpcMethods {
     payload: Record<string, never>
     result: {
       busy: Array<{ index: number; email: string | null; count: number }>
+      lastModelUsedAt?: number | null
     }
   }
   /**

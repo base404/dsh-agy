@@ -4,6 +4,7 @@ import {
   classifyHttpError,
   classifyRefreshFailure,
   describeFetchError,
+  extractErrorMessage,
   extractVerificationUrl,
   isSessionAccumulationOverflow,
 } from '../src/runtime/classify.ts'
@@ -36,7 +37,9 @@ import {
 import { _clearVersionCacheForTest, resolveAntigravityVersion } from '../src/runtime/version.ts'
 import { parseQuotaSummary } from '../src/adapter/quota-summary.ts'
 import {
+  areAllModelGroupsExhausted,
   cachedQuotaReadings,
+  computeAccountRecoveryTime,
   FAMILY_UNKNOWN,
   familiesForBucketId,
   familiesForGroup,
@@ -261,6 +264,65 @@ describe('classifyHttpError', () => {
     expect(classifyRefreshFailure(400, 'invalid_grant').kind).toBe('auth-failure')
     expect(classifyRefreshFailure(429).kind).toBe('rate-limit')
   })
+
+  describe('extractErrorMessage', () => {
+    it('returns undefined for empty input', () => {
+      expect(extractErrorMessage(undefined)).toBeUndefined()
+      expect(extractErrorMessage('')).toBeUndefined()
+    })
+
+    it('extracts error message with status and violations', () => {
+      const body = JSON.stringify({
+        error: {
+          message: 'Resource exhausted',
+          status: 'RESOURCE_EXHAUSTED',
+          details: [
+            { violations: [{ description: 'Daily limit reached' }] },
+          ],
+        },
+      })
+      expect(extractErrorMessage(body)).toBe('Resource exhausted (Daily limit reached) [RESOURCE_EXHAUSTED]')
+    })
+
+    it('extracts error status when message is absent', () => {
+      const body = JSON.stringify({
+        error: {
+          status: 'RESOURCE_EXHAUSTED',
+        },
+      })
+      expect(extractErrorMessage(body)).toBe('RESOURCE_EXHAUSTED')
+    })
+
+    it('extracts top-level message', () => {
+      const body = JSON.stringify({ message: 'Bad request payload' })
+      expect(extractErrorMessage(body)).toBe('Bad request payload')
+    })
+
+    it('extracts ErrorInfo details with reason and metadata', () => {
+      const body = JSON.stringify({
+        error: {
+          message: 'Resource has been exhausted',
+          status: 'RESOURCE_EXHAUSTED',
+          details: [
+            {
+              '@type': 'type.googleapis.com/google.rpc.ErrorInfo',
+              reason: 'RATE_LIMIT_EXCEEDED',
+              metadata: { quota_limit: 'RequestsPerMinutePerProject' },
+            },
+          ],
+        },
+      })
+      expect(extractErrorMessage(body)).toBe('Resource has been exhausted (RATE_LIMIT_EXCEEDED: RequestsPerMinutePerProject) [RESOURCE_EXHAUSTED]')
+    })
+
+    it('extracts string error', () => {
+      expect(extractErrorMessage(JSON.stringify({ error: 'Direct error string' }))).toBe('Direct error string')
+    })
+
+    it('falls back to truncated string for non-JSON text', () => {
+      expect(extractErrorMessage('Simple text error')).toBe('Simple text error')
+    })
+  })
 })
 
 describe('rotation state machine', () => {
@@ -306,11 +368,80 @@ describe('rotation state machine', () => {
     expect(acc.coolingDownUntil).toBeUndefined()
   })
 
-  it('applies a 24h cooldown on daily quota exhaustion', () => {
+  it('applies a cooldown on daily quota exhaustion only when all groups are exhausted', () => {
     const acc = account()
     const decision = decideRotation('rate-limit', acc, 0, undefined, 'quota_exhausted')
     expect(decision.action).toBe('cool')
     expect(acc.coolingDownUntil! - Date.now()).toBeGreaterThan(23 * 60 * 60 * 1000)
+  })
+
+  it('rotates without overall cooldown when only one model family is exhausted', () => {
+    const acc = account()
+    acc.cachedLimits = {
+      updatedAt: Date.now(),
+      groups: [
+        { name: 'Gemini Models', windows: [{ bucketId: 'g-5h', window: '5h', remainingFraction: 0, resetTime: new Date(Date.now() + 3600_000).toISOString() }] },
+        { name: 'Claude and GPT models', windows: [{ bucketId: 'c-5h', window: '5h', remainingFraction: 0.8, resetTime: null }] },
+      ],
+    }
+    const decision = decideRotation('rate-limit', acc, 0, undefined, 'quota_exhausted', undefined, 'gemini-2.5-flash')
+    expect(decision.action).toBe('rotate')
+    expect(acc.coolingDownUntil).toBeUndefined()
+    expect(acc.rateLimitResetTimes?.google).toBeGreaterThan(Date.now())
+  })
+
+  it('cools account with earliest recovery time when all model groups are exhausted', () => {
+    const acc = account()
+    const now = Date.now()
+    const recoverGemini = now + 1800_000 // 30 mins
+    const recoverClaude = now + 3600_000 // 60 mins
+    acc.cachedLimits = {
+      updatedAt: now,
+      groups: [
+        { name: 'Gemini Models', windows: [{ bucketId: 'g-5h', window: '5h', remainingFraction: 0, resetTime: new Date(recoverGemini).toISOString() }] },
+        { name: 'Claude and GPT models', windows: [{ bucketId: 'c-5h', window: '5h', remainingFraction: 0, resetTime: new Date(recoverClaude).toISOString() }] },
+      ],
+    }
+    const decision = decideRotation('rate-limit', acc, 0, undefined, 'quota_exhausted', new Date(recoverClaude).toISOString(), 'claude-3-7-sonnet')
+    expect(decision.action).toBe('cool')
+    expect(acc.cooldownReason).toBe('quota-exhausted')
+    // Cooldown end time is the EARLIEST recovery time among exhausted groups (recoverGemini)
+    expect(acc.coolingDownUntil).toBe(recoverGemini)
+  })
+
+  it('cools account with earliest recovery time when all model groups are exhausted and failed model has no server resetTime', () => {
+    const acc = account()
+    const now = Date.now()
+    const recoverGemini = now + 1800_000 // 30 mins
+    const recoverClaude = now + 3600_000 // 60 mins
+    acc.cachedLimits = {
+      updatedAt: now,
+      groups: [
+        { name: 'Gemini Models', windows: [{ bucketId: 'gemini-5h', window: '5h', remainingFraction: 0, resetTime: new Date(recoverGemini).toISOString() }] },
+        { name: 'Claude and GPT models', windows: [{ bucketId: '3p-5h', window: '5h', remainingFraction: 0, resetTime: new Date(recoverClaude).toISOString() }] },
+      ],
+    }
+    // Failed model is Gemini with NO server resetTime (resetTime is undefined)
+    const decision = decideRotation('rate-limit', acc, 0, undefined, 'quota_exhausted', undefined, 'gemini-2.5-flash')
+    expect(decision.action).toBe('cool')
+    expect(acc.cooldownReason).toBe('quota-exhausted')
+    // Cooldown end time is the EARLIEST recovery time among exhausted groups (recoverGemini, 30m), NOT 60m or 24h
+    expect(acc.coolingDownUntil).toBe(recoverGemini)
+  })
+
+  it('matches group by bucketId even with unrecognized group name', () => {
+    const acc = account()
+    const now = Date.now()
+    const recover = now + 1200_000
+    acc.cachedLimits = {
+      updatedAt: now,
+      groups: [
+        { name: 'Custom Unrecognized Label', windows: [{ bucketId: 'gemini-5h', window: '5h', remainingFraction: 0, resetTime: new Date(recover).toISOString() }] },
+      ],
+    }
+    const decision = decideRotation('rate-limit', acc, 0, undefined, 'quota_exhausted', undefined, 'gemini-2.5-flash')
+    expect(decision.action).toBe('cool')
+    expect(acc.coolingDownUntil).toBe(recover)
   })
 
   it('revokes on auth-failure and disables the account', () => {

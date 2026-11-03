@@ -661,6 +661,36 @@ export function smartQuotaVerdict(accounts: readonly AccountView[], now: number)
   }
 }
 
+/**
+ * Idle threshold for smart mode: 5 minutes without using any Antigravity model.
+ */
+export const SMART_MODE_IDLE_TIMEOUT_MS = 5 * 60 * 1000
+
+/**
+ * Whether smart mode should pause automatic refresh due to inactivity.
+ * If no Antigravity model has been used within the last 5 minutes (300,000 ms), returns true.
+ */
+export function isSmartModeIdle(lastUsedAt: number | null | undefined, now: number): boolean {
+  if (typeof lastUsedAt !== 'number' || !Number.isFinite(lastUsedAt) || lastUsedAt <= 0) {
+    return true
+  }
+  return (now - lastUsedAt) >= SMART_MODE_IDLE_TIMEOUT_MS
+}
+
+/**
+ * Extract the most recent Antigravity model use timestamp across accounts.
+ */
+export function lastModelUsedTime(accounts: readonly AccountView[]): number | null {
+  let latest: number | null = null
+  for (const acc of accounts) {
+    const t = acc.usage?.lastUsedAt
+    if (typeof t === 'number' && Number.isFinite(t) && t > 0) {
+      if (latest === null || t > latest) latest = t
+    }
+  }
+  return latest
+}
+
 /** Build the window rows of one group card. */
 export function windowRows(
   windows: readonly QuotaWindow[],

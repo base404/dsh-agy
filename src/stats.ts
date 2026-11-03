@@ -540,6 +540,26 @@ export class UsageStats {
    * Count-based flushing is also suspended while set: see `record()`.
    */
   private flushFailedSince: number | undefined
+  private _lastModelUsedAt: number | null = null
+
+  /** Timestamp (epoch ms) of the most recent model request recorded by this ledger. */
+  getLastModelUsedAt(): number | null {
+    if (this._lastModelUsedAt !== null) return this._lastModelUsedAt
+    for (let i = this.recent.length - 1; i >= 0; i--) {
+      const entry = this.recent[i]
+      if (entry && entry.kind !== 'rotation' && typeof entry.at === 'number') {
+        return entry.at
+      }
+    }
+    const doc = this.snapshot()
+    let latest: number | null = null
+    for (const acc of Object.values(doc.accounts)) {
+      if (typeof acc.lastUsedAt === 'number' && Number.isFinite(acc.lastUsedAt)) {
+        if (latest === null || acc.lastUsedAt > latest) latest = acc.lastUsedAt
+      }
+    }
+    return latest
+  }
 
   constructor(options: UsageStatsStoreOptions = {}) {
     // Explicit file (tests, callers with their own layout) is used as-is; the
@@ -594,6 +614,9 @@ export class UsageStats {
 
   /** Record one request. Hot path: no I/O. */
   record(record: UsageRecord): void {
+    if (record.poolEvent !== true) {
+      this._lastModelUsedAt = this.now()
+    }
     this.noteRecent(record)
     this.pending.push(record)
     // Cap the backlog: unbounded growth is the one failure mode a diagnostic

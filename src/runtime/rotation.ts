@@ -5,6 +5,7 @@
 
 import type { CachedQuota, FailureKind, ManagedAccount, RotationAction } from '../types.ts'
 import type { RateLimitCategory } from './classify.ts'
+import { areAllModelGroupsExhausted, computeAccountRecoveryTime, familyKeyOf } from './quota.ts'
 
 export const BACKOFF_TIERS_MS = [5_000, 10_000, 20_000, 30_000, 60_000] as const
 
@@ -161,6 +162,7 @@ export function decideRotation(
   retryAfterMs?: number,
   category: RateLimitCategory = 'unknown',
   resetTime?: string,
+  model?: string,
 ): RotationAction {
   const now = Date.now()
   const backoffMs = backoffFor(consecutiveFailures)
@@ -172,16 +174,23 @@ export function decideRotation(
         return { action: 'retry', backoffMs: Math.min(retryAfterMs ?? backoffMs, 3000) }
       }
       if (category === 'quota_exhausted') {
-        // Daily/plan quota gone: cool until the real reset when the backend
-        // reported one (capped at 24h), else the fixed daily window.
+        const familyKey = familyKeyOf(model)
         const resetMs = parseFutureResetMs(resetTime, now)
         const cooldownMs = resetMs !== undefined
           ? Math.min(resetMs - now, FULL_QUOTA_COOLDOWN_MS)
           : FULL_QUOTA_COOLDOWN_MS
-        account.coolingDownUntil = now + Math.max(cooldownMs, 60_000)
-        account.cooldownReason = 'quota-exhausted'
-        account.cooldownSetAt = now
-        return { action: 'cool', backoffMs: Math.max(cooldownMs, 60_000) }
+        const familyReset = now + Math.max(cooldownMs, 60_000)
+        recordRateLimit(account, familyKey, familyReset)
+
+        if (areAllModelGroupsExhausted(account, model, now, familyReset)) {
+          const recoveryTime = computeAccountRecoveryTime(account, now, familyReset, model) ?? familyReset
+          const actualCooldownMs = Math.min(Math.max(recoveryTime - now, 60_000), FULL_QUOTA_COOLDOWN_MS)
+          account.coolingDownUntil = now + actualCooldownMs
+          account.cooldownReason = 'quota-exhausted'
+          account.cooldownSetAt = now
+          return { action: 'cool', backoffMs: actualCooldownMs }
+        }
+        return { action: 'rotate', backoffMs: Math.max(Math.min(familyReset - now, RATE_LIMIT_COOLDOWN_MS), 1000) }
       }
       // Per-minute rate limit: prefer the server's real reset (capped), then
       // Retry-After, then the fixed short window. The family-scoped reset is

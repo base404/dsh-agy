@@ -31,6 +31,8 @@ import {
   formatDetailedReset,
   isAccountAllQuotaExhausted,
   isAccountQuotaExhausted,
+  isSmartModeIdle,
+  lastModelUsedTime,
   limitsOlderThanInterval,
   modelLabelForGroup,
   nextHealthyIndex,
@@ -88,9 +90,22 @@ export const MOBILE_BREAKPOINT_PX = 640
  * dead-ending.
  */
 export function nextSwitchableIndex(accounts: readonly AccountView[]): number | null {
+  const healthy = accounts.filter((candidate) => candidate.state === 'active')
+  const activeIndex = accounts.find((candidate) => candidate.active)?.index ?? accounts[0]?.index
+
+  if (healthy.length > 0) {
+    const pos = healthy.findIndex((candidate) => candidate.index === activeIndex)
+    if (pos >= 0) {
+      if (healthy.length < 2) return null
+      const next = healthy[(pos + 1) % healthy.length]!
+      return next.index === activeIndex ? null : next.index
+    }
+    const nextAfter = healthy.find((candidate) => candidate.index > (activeIndex ?? -1))
+    return (nextAfter ?? healthy[0])!.index
+  }
+
   const switchable = accounts.filter((candidate) => candidate.state !== 'disabled')
   if (switchable.length < 2) return null
-  const activeIndex = accounts.find((candidate) => candidate.active)?.index ?? switchable[0]!.index
   const pos = switchable.findIndex((candidate) => candidate.index === activeIndex)
   const anchor = pos >= 0 ? pos : switchable.length - 1
   const next = switchable[(anchor + 1) % switchable.length]!
@@ -237,6 +252,9 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
     pausedUntilRef.current = until
     setPausedUntil(until)
   }, [])
+  const lastModelUsedRef = useRef<number | null>(null)
+  const isIdlePausedRef = useRef<boolean>(false)
+  const [isIdlePaused, setIsIdlePaused] = useState<boolean>(false)
   const [badgeDetailedMode, setBadgeDetailedMode] = useState<boolean>(DEFAULT_BADGE_DETAILED_MODE)
   const [badgeModelGroup, setBadgeModelGroup] = useState<string>(DEFAULT_BADGE_MODEL_GROUP)
   const [badgeWindowType, setBadgeWindowType] = useState<BadgeWindowType>(DEFAULT_BADGE_WINDOW_TYPE)
@@ -293,15 +311,33 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
     targetIndex?: number | null,
   ) => {
     const currentNow = Date.now()
-    // Smart pause holds BEFORE any RPC: a paused tick is free — no account
-    // read, no limits probe, nothing. A manual load overrides (and clears) the
-    // pause: the click IS the user asking for numbers. The pause re-opens
-    // through the render tick at the promised recovery moment.
-    if (!isManual && smartModeRef.current && refreshMinutes !== null && pausedUntilRef.current !== null) {
-      if (currentNow < pausedUntilRef.current) return
+    if (isManual) {
       setPause(null)
+      isIdlePausedRef.current = false
+      setIsIdlePaused(false)
     }
-    if (isManual) setPause(null)
+    // Smart pause holds BEFORE any RPC: a paused tick is free — no account
+    const isInitialLoad = lastFetchTimeRef.current === 0
+    if (isManual && isIdlePausedRef.current) {
+      isIdlePausedRef.current = false
+      setIsIdlePaused(false)
+    }
+    if (!isManual && !isInitialLoad && smartModeRef.current && refreshMinutes !== null) {
+      if (pausedUntilRef.current !== null) {
+        if (currentNow < pausedUntilRef.current) return
+        setPause(null)
+      }
+      if (isSmartModeIdle(lastModelUsedRef.current, currentNow)) {
+        isIdlePausedRef.current = true
+        setIsIdlePaused(true)
+        return
+      }
+      if (isIdlePausedRef.current) {
+        isIdlePausedRef.current = false
+        setIsIdlePaused(false)
+        forceProbe = true
+      }
+    }
     // The configured interval is the throttle's floor: a 1-minute setting must
     // not be swallowed by the 2-minute wake guard. "Never" keeps the plain
     // guard so a wake refresh cannot stack onto a fresh one.
@@ -321,6 +357,11 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
         rpc.call('ui.prefs.get', {}).catch(() => null),
       ])
       setAccounts(listed.accounts)
+      if (listed.lastModelUsedAt) {
+        lastModelUsedRef.current = listed.lastModelUsedAt
+      } else if (lastModelUsedRef.current === null) {
+        lastModelUsedRef.current = lastModelUsedTime(listed.accounts)
+      }
       if (prefs) {
         setDetailedReset(prefs.detailedQuotaReset === true)
         setRefreshMinutes(prefs.quotaRefreshMinutes)
@@ -330,6 +371,10 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
         setBadgeModelGroup(prefs.badgeModelGroup ?? DEFAULT_BADGE_MODEL_GROUP)
         setBadgeWindowType(prefs.badgeWindowType ?? DEFAULT_BADGE_WINDOW_TYPE)
         setBadgeSkipZeroWeekly(prefs.badgeSkipZeroWeekly ?? DEFAULT_BADGE_SKIP_ZERO_WEEKLY)
+      }
+      if (smartModeRef.current && refreshMinutes !== null && isSmartModeIdle(lastModelUsedRef.current, currentNow)) {
+        isIdlePausedRef.current = true
+        setIsIdlePaused(true)
       }
       setError(null)
 
@@ -432,14 +477,38 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
         setPause(null)
         void load(false, true)
       }
+      if (isIdlePausedRef.current && smartModeRef.current && refreshMinutes !== null && document.visibilityState !== 'hidden') {
+        void rpc.call('pool.status', {}).then((status) => {
+          if (status.lastModelUsedAt) {
+            lastModelUsedRef.current = status.lastModelUsedAt
+            if (!isSmartModeIdle(status.lastModelUsedAt, Date.now())) {
+              isIdlePausedRef.current = false
+              setIsIdlePaused(false)
+              void load(false, true)
+              window.dispatchEvent(new CustomEvent('agy:model-used', { detail: { at: status.lastModelUsedAt } }))
+            }
+          }
+        }).catch(() => {})
+      }
     }, RENDER_TICK_MS)
     const onWake = (): void => {
       if (document.visibilityState !== 'hidden') void load(false)
     }
+    const onModelUsed = (e: Event): void => {
+      const at = (e as CustomEvent<{ at?: number }>).detail?.at ?? Date.now()
+      lastModelUsedRef.current = at
+      if (isIdlePausedRef.current) {
+        isIdlePausedRef.current = false
+        setIsIdlePaused(false)
+        void load(false, true)
+      }
+    }
+    window.addEventListener('agy:model-used', onModelUsed)
     window.addEventListener('focus', onWake)
     document.addEventListener('visibilitychange', onWake)
     return () => {
       window.clearInterval(tick)
+      window.removeEventListener('agy:model-used', onModelUsed)
       window.removeEventListener('focus', onWake)
       document.removeEventListener('visibilitychange', onWake)
     }
@@ -965,6 +1034,14 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
           t('smartPausedNote', {
             time: formatDetailedReset('5h', new Date(pausedUntil).toISOString(), t, now) ?? '—',
           }),
+        )
+        : null,
+
+      isIdlePaused
+        ? h(
+          'div',
+          { className: 'agy-ui-window-note' },
+          t('smartIdlePausedNote'),
         )
         : null,
 

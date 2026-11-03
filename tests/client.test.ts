@@ -719,10 +719,13 @@ describe('nextSwitchableIndex', () => {
     active,
   }) as AccountView
 
-  it('rotates forward over non-disabled accounts and wraps', () => {
+  it('rotates forward preferring non-cooling accounts and wraps', () => {
     const accounts = [view(0, 'active', true), view(1, 'cooling'), view(2, 'active')]
-    expect(nextSwitchableIndex(accounts)).toBe(1)
-    expect(nextSwitchableIndex([view(0, 'cooling'), view(1, 'active', true), view(2, 'disabled')])).toBe(0)
+    expect(nextSwitchableIndex(accounts)).toBe(2)
+    // If the only healthy account is current, do not switch to a cooling account.
+    expect(nextSwitchableIndex([view(0, 'cooling'), view(1, 'active', true), view(2, 'disabled')])).toBeNull()
+    // When current is cooling and a healthy account is available, switch to healthy.
+    expect(nextSwitchableIndex([view(0, 'cooling', true), view(1, 'active'), view(2, 'disabled')])).toBe(1)
     // A single switchable account cannot rotate — not even to itself.
     expect(nextSwitchableIndex([view(0, 'disabled'), view(1, 'active', true)])).toBeNull()
     // Wrap: the last switchable account rotates back to the first.
