@@ -74,8 +74,8 @@ describe('ui-prefs parser and sanitizer', () => {
   })
 
   it('resolves an unstored interval to the shipped default in the view', () => {
-    expect(DEFAULT_QUOTA_REFRESH_MINUTES).toBe(5)
-    expect(quotaRefreshMinutesView({ version: 1 })).toBe(5)
+    expect(DEFAULT_QUOTA_REFRESH_MINUTES).toBe(2)
+    expect(quotaRefreshMinutesView({ version: 1 })).toBe(2)
     expect(quotaRefreshMinutesView({ version: 1, quotaRefreshMinutes: null })).toBeNull()
     expect(quotaRefreshMinutesView({ version: 1, quotaRefreshMinutes: 30 })).toBe(30)
   })

@@ -1014,7 +1014,7 @@ describe('agy management RPC', () => {
       const initial = await management.call('ui.prefs.get', {}) as { conversationBadge: boolean; detailedQuotaReset: boolean; quotaRefreshMinutes: number | null }
       expect(initial.conversationBadge).toBe(false)
       expect(initial.detailedQuotaReset).toBe(false)
-      expect(initial.quotaRefreshMinutes).toBe(5)
+      expect(initial.quotaRefreshMinutes).toBe(2)
 
       const updated = await management.call('ui.prefs.set', { conversationBadge: true, detailedQuotaReset: true }) as { conversationBadge: boolean; detailedQuotaReset: boolean }
       expect(updated.conversationBadge).toBe(true)

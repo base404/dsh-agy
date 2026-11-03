@@ -2,7 +2,7 @@
 export const QUOTA_REFRESH_MIN_MINUTES = 1
 export const QUOTA_REFRESH_MAX_MINUTES = 120
 /** Interval used while nothing is stored. */
-export const DEFAULT_QUOTA_REFRESH_MINUTES = 5
+export const DEFAULT_QUOTA_REFRESH_MINUTES = 2
 
 export type BadgeWindowType = 'both' | '5h' | 'weekly'
 
