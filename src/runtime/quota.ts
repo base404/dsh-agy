@@ -733,7 +733,8 @@ export function computeAccountRecoveryTime(
 
       let groupReset: number | null = null
       for (const w of group.windows) {
-        if (typeof w.remainingFraction === 'number' && w.remainingFraction <= 0) {
+        const threshold = w.window.toLowerCase() === 'weekly' ? WEEKLY_QUOTA_THRESHOLD : 0
+        if (typeof w.remainingFraction === 'number' && w.remainingFraction <= threshold) {
           const r = parseFutureResetMs(w.resetTime ?? undefined, now)
           if (r !== undefined && (groupReset === null || r > groupReset)) {
             groupReset = r

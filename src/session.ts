@@ -24,7 +24,9 @@ import {
   recordRateLimit,
 } from './runtime/rotation.ts'
 import {
+  areAllModelGroupsExhausted,
   cachedQuotaReadings,
+  computeAccountRecoveryTime,
   familyKeyOf,
   familyQuotaFor,
   ingestFamilyQuotas,
@@ -53,176 +55,44 @@ import { accountFetch, isProxyUnreachableError, probeFetch, proxiedFetch } from 
 import { describeFetchError } from './runtime/classify.ts'
 import type { Fingerprint } from './types.ts'
 
-export interface SessionManagerOptions {
-  store: AccountStore
-  /** Called after rotation changes the active index (for logging/UI). */
-  onRotate?: (fromIndex: number, toIndex: number, reason: FailureKind) => void
-  /** Called after a health check finishes (batch probe results). */
-  onHealthReport?: (results: AccountHealthResult[]) => void
-  /**
-   * Receives one usage record per account-scoped upstream call made outside the
-   * chat path (verification, test calls, CLI invocations).
-   *
-   * This is the half of the ledger DSH structurally cannot supply: those calls
-   * consume upstream quota without ever producing a session event, so agy is
-   * the only party that can count them. Chat generations are recorded by the
-   * adapter, which sees their token usage.
-   */
-  recordUsage?: (record: UsageRecord) => void
+import type {
+  AccountHealthResult,
+  LimitsRefreshResult,
+  LimitSample,
+  QuotaRefreshResult,
+  SessionManagerOptions,
+  TokenCacheEntry,
+  UsageRecord,
+} from './session/types.ts'
+import {
+  SESSION_AFFINITY_WINDOW_MS,
+  SessionAffinityTracker,
+} from './session/affinity.ts'
+import { InFlightTracker } from './session/in-flight.ts'
+import {
+  MIN_BURN_SAMPLE_MS,
+  LimitBurnTracker,
+  sampleLimitBurn,
+} from './session/burn-rate.ts'
+import {
+  accountKey,
+  impersonationHeadersFor,
+  isModelSupportedByAccount,
+} from './session/account-support.ts'
+
+export {
+  SESSION_AFFINITY_WINDOW_MS,
+  MIN_BURN_SAMPLE_MS,
+  sampleLimitBurn,
+  isModelSupportedByAccount,
+  impersonationHeadersFor,
 }
-
-/** A usage record emitted by the session manager's non-chat call paths. */
-export interface UsageRecord {
-  account?: string
-  model?: string
-  source: 'chat' | 'cli' | 'verify' | 'test'
-  ok: boolean
-  rateLimited?: boolean
-  /** Token usage, when the call parsed an upstream stream. */
-  usage?: { input: number; output: number; cacheRead: number; cacheWrite: number }
-  latencyMs?: number
-  ttftMs?: number
-  /**
-   * A pool-level event (a rotation) rather than a request of its own.
-   * The adapter has already recorded the request that failed, so this must
-   * move only the pool counters or the request would be counted twice.
-   */
-  poolEvent?: boolean
-  /** Marks a rotation in a pool event. */
-  rotated?: boolean
-  /**
-   * The failure classification ('rate-limit', 'network-error', ...), when the
-   * record failed. Diagnostics only — the ledger counters ignore it.
-   */
-  reason?: string
-}
-
-/** One account's health check result (refresh + userinfo). */
-export interface AccountHealthResult {
-  index: number
-  email?: string
-  ok: boolean
-  error?: string
-}
-
-/**
- * What one 5h/weekly window refresh actually did.
- *
- * Exists so an EXPLICIT refresh can report its outcome. The three lists are
- * separate because they read identically on screen otherwise: "nothing was due
- * (TTL)" and "every probe failed" both leave the displayed numbers untouched,
- * so a caller that cannot tell them apart cannot say anything truthful.
- */
-export interface LimitsRefreshResult {
-  /** Account keys whose windows were measured and written. */
-  measured: string[]
-  /** Account keys whose probe was attempted and failed. */
-  failed: string[]
-  /** Accounts not probed because their snapshot was still fresh. */
-  skipped: number
-}
-
-/**
- * Session affinity window: reuse the last-used account for new requests within
- * this window (proxy for one DSH conversation, which exposes no id). After the
- * window or on failure the pool re-balances.
- */
-export const SESSION_AFFINITY_WINDOW_MS = 10 * 60 * 1000
-
-/**
- * One quota-fraction snapshot, for the burn rate. Memory only.
- *
- * Upstream reports windows as a remaining FRACTION with no capacity, so the
- * only honest way to a "how long until this runs dry" figure is the fraction's
- * own rate of change: keep the previous snapshot, and the next one yields
- * fraction-per-hour.
- */
-export interface LimitSample {
-  at: number
-  /** bucketId -> remaining fraction; null fractions are omitted. */
-  fractions: Record<string, number>
-}
-
-/** Two samples closer than this are noise (a forced refresh seconds apart). */
-export const MIN_BURN_SAMPLE_MS = 5 * 60 * 1000
-
-/**
- * Fraction-per-hour per window bucket, from two snapshots.
- *
- * Pure and exported for a direct unit test. Rules:
- * - the FIRST sample yields nothing (no baseline yet), and so does a pair
- *   closer than `MIN_BURN_SAMPLE_MS` — two probes seconds apart measure the
- *   probe jitter, not the burn;
- * - a RISING fraction is a reset (or refresh noise), never negative burn;
- * - a bucket with no baseline simply has no rate yet.
- *
- * Returns null when no bucket produced a rate, so the caller can keep the
- * previous rates instead of overwriting them with an empty read.
- */
-export function sampleLimitBurn(prev: LimitSample | undefined, next: LimitSample): Record<string, number> | null {
-  if (prev === undefined) return null
-  const elapsedH = (next.at - prev.at) / 3_600_000
-  if (elapsedH < MIN_BURN_SAMPLE_MS / 3_600_000) return null
-  const perHour: Record<string, number> = {}
-  for (const [bucketId, fraction] of Object.entries(next.fractions)) {
-    const before = prev.fractions[bucketId]
-    if (before !== undefined && before > fraction) {
-      perHour[bucketId] = (before - fraction) / elapsedH
-    }
-  }
-  return Object.keys(perHour).length > 0 ? perHour : null
-}
-
-interface TokenCacheEntry {
-  access: string
-  expires: number
-}
-
-interface QuotaRefreshResult {
-  key: string
-  quotas: Record<string, CachedQuota>
-  updatedAt: number
-}
-
-/**
- * Resolve the impersonation headers for one request from the account's
- * persistent fingerprint (stable identity).
- *
- * The fallback below is only reachable when an account has no stored identity —
- * normal operation creates one on first use (see `getSession`). It is therefore
- * deliberately DETERMINISTIC rather than randomized: a per-request platform or
- * version would make one account appear to be several different machines, which
- * is the anomaly this identity exists to avoid. It reads
- * {@link getFingerprintData} so a `$DSH_HOME/agy/agy-fingerprint-data.json` override
- * still applies on this path.
- */
-/** Whether a specific account is known to support the requested model. */
-export function isModelSupportedByAccount(account: ManagedAccount, model?: string): boolean {
-  if (!model || !account.cachedModels || account.cachedModels.length === 0) return true
-  if (account.cachedModels.includes(model)) return true
-  const tieredMatch = /^(.*)-tiered$/.exec(model)
-  if (tieredMatch) {
-    const base = tieredMatch[1]
-    if (account.cachedModels.some((m) => m === model || m.startsWith(base + '-'))) return true
-  }
-  const levelMatch = /^(.*)-(?:low|medium|high)$/.exec(model)
-  if (levelMatch) {
-    const base = levelMatch[1]
-    if (account.cachedModels.some((m) => m === model || m === `${base}-tiered` || m.startsWith(base + '-'))) return true
-  }
-  return false
-}
-
-export function impersonationHeadersFor(account: ManagedAccount): AgyAccountSession['impersonation'] {
-  const fingerprint = account.fingerprint
-  if (fingerprint) {
-    return {
-      'User-Agent': fingerprint.userAgent,
-      'X-Goog-Api-Client': fingerprint.apiClient,
-      clientMetadata: fingerprint.clientMetadata,
-    }
-  }
-  return getStableHeaders(getFingerprintData(), currentAgyVersion())
+export type {
+  SessionManagerOptions,
+  UsageRecord,
+  AccountHealthResult,
+  LimitsRefreshResult,
+  LimitSample,
 }
 
 export class AgySessionManager {
@@ -260,186 +130,79 @@ export class AgySessionManager {
   /** Refresh the token this far ahead of expiry so a request never blocks on the token endpoint. */
   private static readonly REFRESH_SKEW_MS = 2 * 60 * 1000
 
-  /**
-   * Per-conversation account affinity: the account one conversation is pinned
-   * to, so its turns stay together (upstream prefix cache + `sessionId`
-   * continuity) instead of re-ranking per request.
-   *
-   * Keyed by the conversation — `GenerateOptions.sessionId`, which the DSH agent
-   * loop stamps — rather than by a single "last used" slot. That slot was a
-   * stand-in for a conversation id the code assumed DSH did not expose, and with
-   * two concurrent conversations the second overwrote the first's pin, so both
-   * drifted across the pool independently of which account they started on.
-   * Entries expire after {@link SESSION_AFFINITY_WINDOW_MS}.
-   */
-  private readonly affinity = new Map<string, { key: string; at: number }>()
+  /** Per-conversation account affinity tracker. */
+  private readonly affinity = new SessionAffinityTracker()
 
-  /** Bound on tracked conversations; least-recently-pinned entries are evicted. */
-  private static readonly MAX_AFFINITY_ENTRIES = 64
+  /** In-flight upstream requests per account tracker. */
+  private readonly inFlight = new InFlightTracker()
 
-  /** Bucket for callers with no session identity (standalone CLI, one-shots). */
-  private static readonly ANONYMOUS_CONVERSATION = '\u0000anonymous'
-
-  /**
-   * In-flight upstream requests per account, so selection can spread concurrent
-   * fan-out across the pool instead of stacking every stream on one account.
-   *
-   * Deliberately a PREFERENCE, not a hard gate: when every eligible account is at
-   * the cap, selection proceeds with the best-ranked one rather than waiting.
-   * Blocking would need a reliable release on every path (including an abandoned
-   * stream) and a bounded wait to avoid deadlock, and a leaked counter would then
-   * stall real requests — a worse failure than the burst it prevents. The
-   * documented limitation is therefore: this spreads load across a multi-account
-   * pool, and cannot throttle a single-account one.
-   */
-  private readonly inFlight = new Map<string, { count: number; at: number }>()
+  /** Limit burn rate tracker (fraction-per-hour). */
+  private readonly burnTracker = new LimitBurnTracker()
 
   /** In-flight count for one account, discarding a leaked entry past its TTL. */
   private inFlightCount(accountKey: string, now: number): number {
-    const entry = this.inFlight.get(accountKey)
-    if (entry === undefined) return 0
-    if (now - entry.at > IN_FLIGHT_STALE_MS) {
-      this.inFlight.delete(accountKey)
-      return 0
-    }
-    return entry.count
+    return this.inFlight.inFlightCount(accountKey, now)
   }
 
   /** Record that one upstream request for this account has started. */
   noteRequestStarted(account: ManagedAccount): void {
-    const key = this.accountKey(account)
-    const now = Date.now()
-    this.inFlight.set(key, { count: this.inFlightCount(key, now) + 1, at: now })
+    this.inFlight.noteRequestStarted(this.accountKey(account), Date.now())
   }
 
   /** Record that one upstream request for this account has settled, on any path. */
   noteRequestSettled(account: ManagedAccount): void {
-    const key = this.accountKey(account)
-    const now = Date.now()
-    const count = this.inFlightCount(key, now)
-    if (count <= 1) this.inFlight.delete(key)
-    else this.inFlight.set(key, { count: count - 1, at: now })
+    this.inFlight.noteRequestSettled(this.accountKey(account), Date.now())
   }
 
   /**
    * Which accounts have upstream requests in flight, for the UI's live line.
-   *
-   * The join runs HERE, not in the RPC layer: the in-flight map is keyed by
-   * `accountKey` (id ?? email ?? idx-<refresh>), a derivation the management
-   * surface must not have to replicate — its own email-first key would miss
-   * every account carrying both fields. Counts go through `inFlightCount`, so
-   * an entry leaked past its TTL reads as idle instead of busy forever.
    */
   async inFlightAccounts(): Promise<Array<{ index: number; email: string | null; count: number }>> {
     const storage = await this.store.load()
-    const now = Date.now()
-    const busy: Array<{ index: number; email: string | null; count: number }> = []
-    for (const [index, account] of storage.accounts.entries()) {
-      const count = this.inFlightCount(this.accountKey(account), now)
-      if (count > 0) busy.push({ index, email: account.email ?? null, count })
-    }
-    return busy
+    return this.inFlight.inFlightAccounts(storage.accounts, (a) => this.accountKey(a), Date.now())
   }
 
-  /** Last fraction snapshot per account, for `sampleLimitBurn` (memory only). */
-  private readonly limitFractions = new Map<string, LimitSample>()
-  /** Latest burn rate per account: bucketId -> fraction/hour (memory only). */
-  private readonly limitBurn = new Map<string, { perHour: Record<string, number> }>()
-
   private noteLimitSample(key: string, groups: QuotaGroup[], at: number): void {
-    const fractions: Record<string, number> = {}
-    for (const group of groups) {
-      for (const window of group.windows) {
-        if (window.remainingFraction !== null) fractions[window.bucketId] = window.remainingFraction
-      }
-    }
-    const next: LimitSample = { at, fractions }
-    const burn = sampleLimitBurn(this.limitFractions.get(key), next)
-    // A null result keeps the previous rate: "no drop since the last sample"
-    // is not evidence the burn stopped, just that these two samples saw none.
-    if (burn !== null) this.limitBurn.set(key, { perHour: burn })
-    this.limitFractions.set(key, next)
+    this.burnTracker.noteLimitSample(key, groups, at)
   }
 
   /**
    * Burn rates per account INDEX, for the `account.limits` reply.
-   *
-   * The index join runs here, like `inFlightAccounts`: the rate map is keyed
-   * by `accountKey`, a derivation the management surface must not replicate.
    */
   async limitBurnRates(): Promise<Array<{ index: number; perHour: Record<string, number> }>> {
     const storage = await this.store.load()
-    const out: Array<{ index: number; perHour: Record<string, number> }> = []
-    for (const [index, account] of storage.accounts.entries()) {
-      const entry = this.limitBurn.get(this.accountKey(account))
-      if (entry !== undefined) out.push({ index, perHour: entry.perHour })
-    }
-    return out
-  }
-
-  /** The map key for a conversation; anonymous callers share one bucket. */
-  private conversationKeyFor(conversationKey?: string): string {
-    const trimmed = conversationKey?.trim()
-    return trimmed && trimmed.length > 0 ? trimmed : AgySessionManager.ANONYMOUS_CONVERSATION
-  }
-
-  /** Drop expired pins and keep the map bounded. */
-  private pruneAffinity(now: number): void {
-    for (const [conversation, pin] of this.affinity) {
-      if (now - pin.at >= SESSION_AFFINITY_WINDOW_MS) this.affinity.delete(conversation)
-    }
-    while (this.affinity.size > AgySessionManager.MAX_AFFINITY_ENTRIES) {
-      const oldest = this.affinity.keys().next()
-      if (oldest.done) break
-      this.affinity.delete(oldest.value)
-    }
+    return this.burnTracker.limitBurnRates(storage.accounts, (a) => this.accountKey(a))
   }
 
   /** The account key this conversation is pinned to, when the pin is still fresh. */
   private affinityFor(conversationKey: string | undefined, now: number): string | null {
-    const pin = this.affinity.get(this.conversationKeyFor(conversationKey))
-    if (!pin || now - pin.at >= SESSION_AFFINITY_WINDOW_MS) return null
-    return pin.key
+    return this.affinity.affinityFor(conversationKey, now)
   }
 
   /** Pin one conversation to one account. Re-inserts so eviction stays LRU. */
   private setAffinity(conversationKey: string | undefined, accountKey: string, now: number): void {
-    const conversation = this.conversationKeyFor(conversationKey)
-    this.affinity.delete(conversation)
-    this.affinity.set(conversation, { key: accountKey, at: now })
-    this.pruneAffinity(now)
+    this.affinity.setAffinity(conversationKey, accountKey, now)
   }
 
   /**
    * Drop every pin pointing at one account.
-   *
-   * A rotation or a skip means the account just proved unusable for the
-   * conversation that was pinned to it; other conversations pinned elsewhere keep
-   * their pins, which the single-slot version could not express.
    */
   private clearAffinityForAccount(accountKey: string): void {
-    for (const [conversation, pin] of this.affinity) {
-      if (pin.key === accountKey) this.affinity.delete(conversation)
-    }
+    this.affinity.clearAffinityForAccount(accountKey)
   }
 
   /**
    * Drop the affinity pin for one conversation.
    */
   clearAffinityForConversation(conversationKey?: string): void {
-    const key = this.conversationKeyFor(conversationKey)
-    this.affinity.delete(key)
+    this.affinity.clearAffinityForConversation(conversationKey)
   }
 
   /**
    * Clear all session affinity pins.
-   *
-   * Called when an account is explicitly activated by the user, so all
-   * ongoing and upcoming conversations immediately steer to the newly
-   * activated account rather than staying pinned to the previous one.
    */
   clearAllAffinity(): void {
-    this.affinity.clear()
+    this.affinity.clearAllAffinity()
   }
 
   private _lastModelUsedAt: number | null = null
@@ -519,7 +282,7 @@ export class AgySessionManager {
   }
 
   private accountKey(account: ManagedAccount): string {
-    return account.id ?? account.email ?? `idx-${account.refresh}`
+    return accountKey(account)
   }
 
   /**
@@ -753,6 +516,7 @@ export class AgySessionManager {
     // opening the accounts page measures and heals a false park instead of
     // leaving it until the cooldown expires.
     const liftedKeys = new Set<string>()
+    const cooledAccounts = new Map<string, { until: number; setAt: number }>()
     for (const update of updates) {
       const target = storage.accounts.find((candidate) => this.accountKey(candidate) === update.key)
       // Only `cachedLimits` — never `cachedQuota`, which is what keeps this
@@ -764,18 +528,19 @@ export class AgySessionManager {
         this.noteLimitSample(update.key, update.groups, update.updatedAt)
         if (this.liftContradictedQuotaPark(target, limitGroupReadings(update.groups), update.updatedAt)) {
           liftedKeys.add(update.key)
+        } else if (areAllModelGroupsExhausted(target, undefined, update.updatedAt)) {
+          const recoveryTime = computeAccountRecoveryTime(target, update.updatedAt) ?? (update.updatedAt + FULL_QUOTA_COOLDOWN_MS)
+          target.coolingDownUntil = recoveryTime
+          target.cooldownReason = 'quota-exhausted'
+          target.cooldownSetAt = update.updatedAt
+          cooledAccounts.set(update.key, { until: recoveryTime, setAt: update.updatedAt })
         }
       }
     }
     // Drop samples for accounts that no longer exist, so the maps stay bounded
     // by the live pool rather than by every account ever seen.
     const live = new Set(storage.accounts.map((account) => this.accountKey(account)))
-    for (const key of this.limitFractions.keys()) {
-      if (!live.has(key)) this.limitFractions.delete(key)
-    }
-    for (const key of this.limitBurn.keys()) {
-      if (!live.has(key)) this.limitBurn.delete(key)
-    }
+    this.burnTracker.pruneNonLive(live)
     try {
       await this.store.mutate((s) => {
         for (const update of updates) {
@@ -786,7 +551,19 @@ export class AgySessionManager {
               target.coolingDownUntil = undefined
               target.cooldownReason = undefined
               target.cooldownSetAt = undefined
+            } else if (cooledAccounts.has(update.key)) {
+              const cooled = cooledAccounts.get(update.key)!
+              target.coolingDownUntil = cooled.until
+              target.cooldownReason = 'quota-exhausted'
+              target.cooldownSetAt = cooled.setAt
             }
+          }
+        }
+        const active = s.accounts[s.activeIndex]
+        if (active && isCoolingDown(active, now)) {
+          const nextIndex = pickNextAccountIndex(s.accounts, s.activeIndex, now)
+          if (nextIndex !== s.activeIndex) {
+            s.activeIndex = nextIndex
           }
         }
       })
