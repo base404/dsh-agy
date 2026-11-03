@@ -95,31 +95,8 @@ export async function pickAccount(
   deps: AccountPickerDeps,
 ): Promise<{ account: ManagedAccount; index: number } | undefined> {
   const now = Date.now()
-  let cooldownChanged = false
   for (const account of storage.accounts) {
     clearExpiredState(account, now)
-    if (account.enabled !== false && !account.verificationRequired && !isCoolingDown(account, now)) {
-      if (areAllModelGroupsExhausted(account, undefined, now)) {
-        const recoveryTime = computeAccountRecoveryTime(account, now) ?? (now + FULL_QUOTA_COOLDOWN_MS)
-        account.coolingDownUntil = recoveryTime
-        account.cooldownReason = 'quota-exhausted'
-        account.cooldownSetAt = now
-        cooldownChanged = true
-      }
-    }
-  }
-  if (cooldownChanged) {
-    await deps.store.mutate((s) => {
-      for (const account of s.accounts) {
-        if (account.enabled !== false && !account.verificationRequired && !isCoolingDown(account, now)) {
-          if (areAllModelGroupsExhausted(account, undefined, now)) {
-            account.coolingDownUntil = computeAccountRecoveryTime(account, now) ?? (now + FULL_QUOTA_COOLDOWN_MS)
-            account.cooldownReason = 'quota-exhausted'
-            account.cooldownSetAt = now
-          }
-        }
-      }
-    }).catch(() => {})
   }
 
   const family = modelFamilyOf(model)

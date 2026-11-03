@@ -322,6 +322,63 @@ describe('AgySessionManager', () => {
     await expect(sessions.recoverAccount(99)).rejects.toThrow(/account not found/)
   })
 
+  it('sets coolingDownUntil to earliest recovery time when switching to an account whose model groups are exhausted', async () => {
+    stubTokenEndpoint()
+    const now = Date.now()
+    const earliestReset = now + 2 * 3600_000 // 2 hours
+    const laterReset = now + 5 * 86400_000 // 5 days
+
+    const acc0 = account('active@x')
+    const acc1 = account('exhausted@x')
+    acc1.cachedLimits = {
+      groups: [
+        {
+          name: 'Gemini Models',
+          windows: [
+            { bucketId: 'gemini-5h', window: '5h', remainingFraction: 0, resetTime: new Date(earliestReset).toISOString() },
+            { bucketId: 'gemini-weekly', window: 'weekly', remainingFraction: 0.2, resetTime: new Date(laterReset).toISOString() },
+          ],
+        },
+        {
+          name: 'Claude and GPT models',
+          windows: [
+            { bucketId: '3p-5h', window: '5h', remainingFraction: 0, resetTime: new Date(laterReset).toISOString() },
+            { bucketId: '3p-weekly', window: 'weekly', remainingFraction: 0, resetTime: new Date(laterReset).toISOString() },
+          ],
+        },
+      ],
+      updatedAt: now,
+    }
+
+    const store = new InMemoryAccountStore(storage([acc0, acc1], 0))
+    const sessions = new AgySessionManager({ store })
+
+    // Switch to account 1 (exhausted): should switch to it and set cooldown to earliest recovery time
+    await sessions.activateAccount(1)
+    let state = await store.load()
+    expect(state.activeIndex).toBe(1)
+    expect(state.accounts[1]!.coolingDownUntil).toBeGreaterThanOrEqual(earliestReset - 1000)
+    expect(state.accounts[1]!.coolingDownUntil).toBeLessThanOrEqual(earliestReset + 1000)
+    expect(state.accounts[1]!.cooldownReason).toBe('quota-exhausted')
+
+    // Lifting cooldown: cooldown should be cleared and stay lifted
+    await sessions.recoverAccount(1)
+    state = await store.load()
+    expect(state.accounts[1]!.coolingDownUntil).toBeUndefined()
+    expect(state.accounts[1]!.cooldownReason).toBeUndefined()
+
+    // Refreshing limits should NOT automatically re-cool the account
+    await sessions.refreshLimits(state)
+    state = await store.load()
+    expect(state.accounts[1]!.coolingDownUntil).toBeUndefined()
+
+    // Switching to account 1 again should re-cool it to the earliest recovery time
+    await sessions.activateAccount(1)
+    state = await store.load()
+    expect(state.accounts[1]!.coolingDownUntil).toBeGreaterThanOrEqual(earliestReset - 1000)
+    expect(state.accounts[1]!.cooldownReason).toBe('quota-exhausted')
+  })
+
   it('rotates active index on 429 quota_exhausted', async () => {
     stubTokenEndpoint()
     const store = new InMemoryAccountStore(storage([account('a@x'), account('b@x')], 0))

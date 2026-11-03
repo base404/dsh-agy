@@ -131,22 +131,20 @@ export function buildAccountSelectOptions(
   accounts: readonly AccountView[],
   activeAccountIndex: number | null,
   t: QuotaTranslate,
-  now = Date.now(),
+  _now = Date.now(),
 ): AccountOptionItem[] {
   return accounts.map((candidate) => {
     const baseEmail = candidate.email ? desensitizeEmail(candidate.email) : `#${candidate.index}`
-    const isExhausted = isAccountAllQuotaExhausted(candidate, now)
-    const effectiveState = candidate.state === 'active' && isExhausted ? 'cooling' : candidate.state
     let suffix = ''
-    if (effectiveState === 'disabled') {
+    if (candidate.state === 'disabled') {
       suffix = ` (${t('stateDisabled')})`
-    } else if (effectiveState === 'cooling') {
+    } else if (candidate.state === 'cooling') {
       suffix = ` (${t('stateCooling')})`
-    } else if (effectiveState === 'verification-required') {
+    } else if (candidate.state === 'verification-required') {
       suffix = ` (${t('stateVerificationRequired')})`
     }
     const isCurrent = candidate.index === activeAccountIndex
-    const isSelectable = effectiveState === 'active'
+    const isSelectable = candidate.state === 'active'
     return {
       index: candidate.index,
       label: `${baseEmail}${suffix}`,
@@ -573,33 +571,17 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
     setIsUpdating(true)
     setError(null)
 
-    const now = Date.now()
     const targetCandidate = accounts.find((a) => a.index === targetIndex)
-    if (targetCandidate && (targetCandidate.state === 'cooling' || isAccountAllQuotaExhausted(targetCandidate, now))) {
+    if (targetCandidate && targetCandidate.state === 'disabled') {
       setIsUpdating(false)
       return
     }
 
     try {
-      const limitsRes = await rpc.call('account.limits', { force: true, index: targetIndex })
-      const targetEntry = limitsRes.limits.find((entry) => entry.index === targetIndex)
-      const updatedTargetLimits = targetEntry?.groups ?? null
-      const testView: AccountView | undefined = targetCandidate
-        ? { ...targetCandidate, limits: updatedTargetLimits }
-        : undefined
-      if (testView && isAccountAllQuotaExhausted(testView, Date.now())) {
-        const listed = await rpc.call('account.list', {})
-        setAccounts(listed.accounts)
-        setIsUpdating(false)
-        return
-      }
-
+      await rpc.call('account.limits', { force: true, index: targetIndex }).catch(() => {})
       await rpc.call('account.activate', { index: targetIndex })
-      setAccounts((current) => current.map((account) => ({
-        ...account,
-        active: account.index === targetIndex,
-        limits: account.index === targetIndex ? updatedTargetLimits : account.limits,
-      })))
+      const listed = await rpc.call('account.list', {})
+      setAccounts(listed.accounts)
       announceAccountChanged(targetIndex)
       await load(true, false, targetIndex)
     } catch {

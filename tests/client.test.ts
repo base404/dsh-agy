@@ -858,7 +858,7 @@ describe('buildAccountSelectOptions', () => {
     })
   })
 
-  it('marks an account as cooling and disabled in dropdown when all model groups have weekly 0% quota', () => {
+  it('keeps an active account selectable without cooling suffix even when all model groups have weekly 0% quota', () => {
     const now = Date.now()
     const futureReset = new Date(now + 86400_000).toISOString()
     const exhaustedAccount: AccountView = {
@@ -894,8 +894,8 @@ describe('buildAccountSelectOptions', () => {
     const options = buildAccountSelectOptions([activeAccount, exhaustedAccount], 0, t, now)
     expect(options[1]).toEqual({
       index: 1,
-      label: 'sa***@gmail.com (冷却中)',
-      disabled: true,
+      label: 'sa***@gmail.com',
+      disabled: false,
     })
   })
 })

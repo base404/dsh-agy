@@ -348,7 +348,7 @@ describe('solo-account limits', () => {
     expect(after.accounts[0]!.cooldownReason).toBe('quota-exhausted')
   })
 
-  it('cools an active account when refreshLimits discovers all model groups have weekly 0% quota', async () => {
+  it('cools an account when activating it if all model groups are exhausted', async () => {
     const calls: string[] = []
     const futureReset = new Date(Date.now() + 86400_000).toISOString()
     stubSummary(calls, [
@@ -369,14 +369,19 @@ describe('solo-account limits', () => {
     ])
     const acc1 = account('saura@gmail.com')
     const acc2 = account('healthy@gmail.com')
-    const store = new InMemoryAccountStore(storage([acc1, acc2], 0))
+    const store = new InMemoryAccountStore(storage([acc1, acc2], 1))
     const sessions = new AgySessionManager({ store })
     await sessions.refreshLimits(await store.load(), { force: true, indices: [0] })
 
-    const after = await store.load()
+    // refreshLimits does not auto-cool, preserving uncooled state until switched to
+    let after = await store.load()
+    expect(after.accounts[0]!.coolingDownUntil).toBeUndefined()
+
+    // Switching to the exhausted account checks quota and re-cools to earliest recovery time
+    await sessions.activateAccount(0)
+    after = await store.load()
+    expect(after.activeIndex).toBe(0)
     expect(after.accounts[0]!.coolingDownUntil).toBeGreaterThan(Date.now())
     expect(after.accounts[0]!.cooldownReason).toBe('quota-exhausted')
-    // Active index rotated away from cooling saura to healthy
-    expect(after.activeIndex).toBe(1)
   })
 })

@@ -6,14 +6,10 @@
 import type { AccountStorageV4, CachedQuota, ManagedAccount, OAuthAuthDetails, QuotaGroup } from '../types.ts'
 import type { AccountStore } from '../store/accounts.ts'
 import {
-  FULL_QUOTA_COOLDOWN_MS,
   isCoolingDown,
-  pickNextAccountIndex,
 } from '../runtime/rotation.ts'
 import {
-  areAllModelGroupsExhausted,
   cachedQuotaReadings,
-  computeAccountRecoveryTime,
   ingestFamilyQuotas,
   isLimitsStale,
   isQuotaStale,
@@ -155,13 +151,8 @@ export class SessionQuotaManager {
       failed,
       skipped: candidates.length - targets.length,
     }
-    const hasUncooledExhausted = storage.accounts.some((acc) =>
-      acc.enabled !== false && !acc.verificationRequired && !isCoolingDown(acc, now) && areAllModelGroupsExhausted(acc, undefined, now)
-    )
-    if (updates.length === 0 && !hasUncooledExhausted) return result
-
+    if (updates.length === 0) return result
     const liftedKeys = new Set<string>()
-    const cooledAccounts = new Map<string, { until: number; setAt: number }>()
     for (const update of updates) {
       const target = storage.accounts.find((candidate) => this.options.accountKey(candidate) === update.key)
       if (target) {
@@ -169,32 +160,12 @@ export class SessionQuotaManager {
         this.options.noteLimitSample(update.key, update.groups, update.updatedAt)
         if (this.liftContradictedQuotaPark(target, limitGroupReadings(update.groups), update.updatedAt)) {
           liftedKeys.add(update.key)
-        } else if (areAllModelGroupsExhausted(target, undefined, update.updatedAt)) {
-          const recoveryTime = computeAccountRecoveryTime(target, update.updatedAt) ?? (update.updatedAt + FULL_QUOTA_COOLDOWN_MS)
-          target.coolingDownUntil = recoveryTime
-          target.cooldownReason = 'quota-exhausted'
-          target.cooldownSetAt = update.updatedAt
-          cooledAccounts.set(update.key, { until: recoveryTime, setAt: update.updatedAt })
         }
       }
     }
 
     const live = new Set(storage.accounts.map((account) => this.options.accountKey(account)))
     this.options.pruneNonLiveBurnSamples(live)
-
-    for (const acc of storage.accounts) {
-      const key = this.options.accountKey(acc)
-      if (acc.enabled !== false && !acc.verificationRequired && !isCoolingDown(acc, now) && !liftedKeys.has(key)) {
-        if (areAllModelGroupsExhausted(acc, undefined, now)) {
-          const recoveryTime = computeAccountRecoveryTime(acc, now) ?? (now + FULL_QUOTA_COOLDOWN_MS)
-          acc.coolingDownUntil = recoveryTime
-          acc.cooldownReason = 'quota-exhausted'
-          acc.cooldownSetAt = now
-          cooledAccounts.set(key, { until: recoveryTime, setAt: now })
-        }
-      }
-    }
-
     try {
       await this.options.store.mutate((s) => {
         for (const update of updates) {
@@ -210,32 +181,13 @@ export class SessionQuotaManager {
         }
         for (const acc of s.accounts) {
           const key = this.options.accountKey(acc)
-          if (cooledAccounts.has(key)) {
-            const cooled = cooledAccounts.get(key)!
-            acc.coolingDownUntil = cooled.until
-            acc.cooldownReason = 'quota-exhausted'
-            acc.cooldownSetAt = cooled.setAt
-          } else if (liftedKeys.has(key)) {
+          if (liftedKeys.has(key)) {
             acc.coolingDownUntil = undefined
             acc.cooldownReason = undefined
             acc.cooldownSetAt = undefined
-          } else if (acc.enabled !== false && !acc.verificationRequired && !isCoolingDown(acc, now)) {
-            if (areAllModelGroupsExhausted(acc, undefined, now)) {
-              const recoveryTime = computeAccountRecoveryTime(acc, now) ?? (now + FULL_QUOTA_COOLDOWN_MS)
-              acc.coolingDownUntil = recoveryTime
-              acc.cooldownReason = 'quota-exhausted'
-              acc.cooldownSetAt = now
-            }
           }
         }
-        const active = s.accounts[s.activeIndex]
-        if (active && isCoolingDown(active, now)) {
-          const nextIndex = pickNextAccountIndex(s.accounts, s.activeIndex, now)
-          if (nextIndex !== s.activeIndex) {
-            s.activeIndex = nextIndex
-          }
-        }
-      })
+            })
     } catch {
       // A derived display cache; a failed write degrades gracefully.
     }
@@ -288,7 +240,6 @@ export class SessionQuotaManager {
     const updates = results.filter((r): r is { key: string; quotas: Record<string, CachedQuota>; models: string[]; updatedAt: number } => Boolean(r && Object.keys(r.quotas).length > 0))
     if (updates.length > 0) {
       const liftedKeys = new Set<string>()
-      const cooledAccounts = new Map<string, { until: number; setAt: number }>()
       for (const update of updates) {
         const target = storage.accounts.find((candidate) => this.options.accountKey(candidate) === update.key)
         if (target) {
@@ -297,12 +248,6 @@ export class SessionQuotaManager {
           if (update.models.length > 0) target.cachedModels = update.models
           if (this.liftContradictedQuotaPark(target, cachedQuotaReadings(update.quotas), update.updatedAt)) {
             liftedKeys.add(update.key)
-          } else if (areAllModelGroupsExhausted(target, undefined, update.updatedAt)) {
-            const recoveryTime = computeAccountRecoveryTime(target, update.updatedAt) ?? (update.updatedAt + FULL_QUOTA_COOLDOWN_MS)
-            target.coolingDownUntil = recoveryTime
-            target.cooldownReason = 'quota-exhausted'
-            target.cooldownSetAt = update.updatedAt
-            cooledAccounts.set(update.key, { until: recoveryTime, setAt: update.updatedAt })
           }
         }
       }
@@ -318,19 +263,7 @@ export class SessionQuotaManager {
                 target.coolingDownUntil = undefined
                 target.cooldownReason = undefined
                 target.cooldownSetAt = undefined
-              } else if (cooledAccounts.has(update.key)) {
-                const cooled = cooledAccounts.get(update.key)!
-                target.coolingDownUntil = cooled.until
-                target.cooldownReason = 'quota-exhausted'
-                target.cooldownSetAt = cooled.setAt
               }
-            }
-          }
-          const active = s.accounts[s.activeIndex]
-          if (active && isCoolingDown(active, now)) {
-            const nextIndex = pickNextAccountIndex(s.accounts, s.activeIndex, now)
-            if (nextIndex !== s.activeIndex) {
-              s.activeIndex = nextIndex
             }
           }
         })

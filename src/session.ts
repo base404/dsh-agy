@@ -216,7 +216,6 @@ export class AgySessionManager {
    */
   async activateAccount(index: number): Promise<void> {
     const now = Date.now()
-    let isExhausted = false
     await this.store.mutate((storage) => {
       if (index < 0 || index >= storage.accounts.length) {
         throw new Error('account not found')
@@ -226,23 +225,21 @@ export class AgySessionManager {
         throw new Error('account is disabled')
       }
       clearExpiredState(target, now)
+      storage.activeIndex = index
+
       if (areAllModelGroupsExhausted(target, undefined, now)) {
         const recoveryTime = computeAccountRecoveryTime(target, now) ?? (now + FULL_QUOTA_COOLDOWN_MS)
         target.coolingDownUntil = recoveryTime
         target.cooldownReason = 'quota-exhausted'
         target.cooldownSetAt = now
-        isExhausted = true
-        return
+      } else {
+        target.coolingDownUntil = undefined
+        target.cooldownReason = undefined
+        target.cooldownSetAt = undefined
+        target.rateLimitResetTimes = undefined
       }
-      if (isCoolingDown(target, now)) {
-        throw new Error('account is cooling down')
-      }
-      storage.activeIndex = index
     })
     this.clearAllAffinity()
-    if (isExhausted) {
-      throw new Error('account quota exhausted')
-    }
   }
 
   /**
