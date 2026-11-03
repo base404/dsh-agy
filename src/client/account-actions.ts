@@ -40,7 +40,17 @@ export function useAccountHandlers(options: CreateAccountHandlersOptions): Accou
   return useMemo(() => ({
     t,
     onActivate: (index: number) => {
-      void act(() => rpc.call('account.activate', { index })).then(() => {
+      void act(async () => {
+        try {
+          await rpc.call('account.activate', { index })
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          if (msg.includes('quota exhausted') || msg.includes('cooling down')) {
+            return
+          }
+          throw err
+        }
+      }).then(() => {
         window.dispatchEvent(new CustomEvent('agy:account-changed', { detail: { index } }))
         void loadModels()
       })

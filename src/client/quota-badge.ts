@@ -41,6 +41,7 @@ import {
   shouldProbeLimits,
   smartQuotaVerdict,
   toPercent,
+  WEEKLY_QUOTA_THRESHOLD,
   windowLabel,
   type QuotaTranslate,
 } from './quota-view.ts'
@@ -425,12 +426,20 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
         }
         const limits = await rpc.call('account.limits', payload)
         const byIndex = new Map(limits.limits.map((entry) => [entry.index, entry]))
-        setAccounts((current) => current.map((account) => {
-          const entry = byIndex.get(account.index)
-          return entry === undefined
-            ? account
-            : { ...account, limits: entry.groups, limitsUpdatedAt: entry.updatedAt }
-        }))
+        const listedAfter = await rpc.call('account.list', {}).catch(() => null)
+        if (listedAfter) {
+          setAccounts(listedAfter.accounts.map((acc) => {
+            const entry = byIndex.get(acc.index)
+            return entry ? { ...acc, limits: entry.groups, limitsUpdatedAt: entry.updatedAt } : acc
+          }))
+        } else {
+          setAccounts((current) => current.map((account) => {
+            const entry = byIndex.get(account.index)
+            return entry === undefined
+              ? account
+              : { ...account, limits: entry.groups, limitsUpdatedAt: entry.updatedAt }
+          }))
+        }
         failedAtRef.current = limits.measured === 0 && limits.failed > 0 ? Date.now() : null
 
         // Smart pause, judged from the data THIS probe just brought back: the
@@ -567,7 +576,6 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
     const now = Date.now()
     const targetCandidate = accounts.find((a) => a.index === targetIndex)
     if (targetCandidate && (targetCandidate.state === 'cooling' || isAccountAllQuotaExhausted(targetCandidate, now))) {
-      setError(t('cooldownReasonQuotaExhausted'))
       setIsUpdating(false)
       return
     }
@@ -580,7 +588,6 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
         ? { ...targetCandidate, limits: updatedTargetLimits }
         : undefined
       if (testView && isAccountAllQuotaExhausted(testView, Date.now())) {
-        setError(t('cooldownReasonQuotaExhausted'))
         const listed = await rpc.call('account.list', {})
         setAccounts(listed.accounts)
         setIsUpdating(false)
@@ -588,7 +595,6 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
       }
 
       await rpc.call('account.activate', { index: targetIndex })
-      lastManualIndexRef.current = targetIndex
       setAccounts((current) => current.map((account) => ({
         ...account,
         active: account.index === targetIndex,
@@ -596,18 +602,17 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
       })))
       announceAccountChanged(targetIndex)
       await load(true, false, targetIndex)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+    } catch {
       try {
         const listed = await rpc.call('account.list', {})
         setAccounts(listed.accounts)
       } catch {
-        // preserve original error
+        // preserve original state
       }
     } finally {
       setIsUpdating(false)
     }
-  }, [accounts, activeIndex, isUpdating, load, rpc, t])
+  }, [accounts, activeIndex, isUpdating, load, rpc])
 
   /**
    * Rotate the pool's active account forward one position (wrapping around),
@@ -618,45 +623,6 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
     const next = nextSwitchableIndex(accounts)
     if (next === null) return
     await handleActivateAccount(next)
-  }, [accounts, handleActivateAccount])
-
-  // A manual pick is an explicit override: the user chose to sit on this
-  // account, so the auto-rotate below must not bounce them off it until the
-  // choice stops matching reality (a different active index resets it).
-  const lastManualIndexRef = useRef<number | null>(null)
-  // One rotation attempt per exhaustion episode: after the switch the reload
-  // re-runs this effect with the new active account; the flag stops a second
-  // attempt if THAT one is also drained, and the all-drained pool would
-  // otherwise chase its own tail. Cleared as soon as the active account is
-  // healthy again, so the next exhaustion rotates normally.
-  const autoRotateAttemptedRef = useRef(false)
-
-  // Auto-rotate on exhaustion: when a load observes the active account with
-  // EITHER tracked window at 0% and a healthy account exists, switch the pool
-  // to it. The decision is `nextHealthyIndex` — the same quota-aware rule the
-  // rotation reads, so the badge can never rotate differently from the pool.
-  // The switch propagates the usual way: `load(true)` re-reads the listing
-  // (the board then shows the new active account), and `agy:account-changed`
-  // tells the Settings section to reload its own views.
-  useEffect(() => {
-    if (accounts.length === 0) return
-    const active = accounts.find((candidate) => candidate.active) ?? accounts[0]
-    const now = Date.now()
-    if (!active || (!isAccountQuotaExhausted(active, now) && !isAccountAllQuotaExhausted(active, now) && active.state !== 'cooling')) {
-      autoRotateAttemptedRef.current = false
-      return
-    }
-    if (isAccountAllQuotaExhausted(active, now) || active.state === 'cooling') {
-      lastManualIndexRef.current = null
-    } else if (lastManualIndexRef.current === active.index) {
-      return
-    }
-    if (autoRotateAttemptedRef.current) return
-    const next = nextHealthyIndex(accounts, now)
-    if (next === null || next === active.index) return
-    autoRotateAttemptedRef.current = true
-    lastManualIndexRef.current = null
-    void handleActivateAccount(next)
   }, [accounts, handleActivateAccount])
 
   // Listen for account changes broadcast from other surfaces (e.g. Settings Accounts tab)
@@ -763,8 +729,8 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
 
     const has5h = groupRead.fiveHour !== null
     const hasWeekly = groupRead.weekly !== null
-    const weeklyIsZero = groupRead.weekly === 0
-    const fiveHourIsZero = groupRead.fiveHour === 0
+    const weeklyIsZero = groupRead.weekly !== null && groupRead.weekly <= WEEKLY_QUOTA_THRESHOLD
+    const fiveHourIsZero = groupRead.fiveHour !== null && groupRead.fiveHour <= 0
 
     if (weeklyIsZero) {
       shownToken = 'weekly'

@@ -19,7 +19,8 @@ import { maskProxyUrl } from '../store/accounts.ts'
 import { accountFetch, isProxyReachable, normalizeProxyUrl, proxyUrlForLogs, withTotalTimeout } from '../proxy.ts'
 import { AGY_PROVIDER } from '../adapter/models.ts'
 import type { DiscoveredModelEntry } from '../adapter/models.ts'
-import { clearExpiredState } from '../runtime/rotation.ts'
+import { FULL_QUOTA_COOLDOWN_MS, clearExpiredState, isCoolingDown } from '../runtime/rotation.ts'
+import { areAllModelGroupsExhausted, computeAccountRecoveryTime } from '../runtime/quota.ts'
 import { foldWindowBreakdown } from '../stats.ts'
 import { THINKING_BUDGET_MAX, THINKING_BUDGET_MIN } from '../thinking-budget.ts'
 import { CLAUDE_BUDGET_MAX, CLAUDE_BUDGET_MIN } from '../thinking-types.ts'
@@ -217,6 +218,16 @@ export function createAgyManagement(options: AgyManagementOptions): AgyManagemen
     const ledger = stats.snapshot()
     const rows: AccountView[] = []
     for (const [index, account] of storage.accounts.entries()) {
+      const allExhausted = account.enabled !== false
+        && account.verificationRequired !== true
+        && !isCoolingDown(account, now)
+        && areAllModelGroupsExhausted(account, undefined, now)
+      if (allExhausted) {
+        const recoveryTime = computeAccountRecoveryTime(account, now) ?? (now + FULL_QUOTA_COOLDOWN_MS)
+        account.coolingDownUntil = recoveryTime
+        account.cooldownReason = 'quota-exhausted'
+        account.cooldownSetAt = now
+      }
       const state: AccountState = account.enabled === false
         ? 'disabled'
         : account.verificationRequired === true

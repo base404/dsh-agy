@@ -588,9 +588,11 @@ export function isFamilyQuotaExhausted(account: ManagedAccount, family?: ModelFa
   const quota = familyQuotaFor(account, family)
   const spent = (fraction: number | undefined, resetTime: string | undefined, threshold = 0): boolean => {
     if (typeof fraction !== 'number' || fraction > threshold) return false
-    if (!resetTime) return true
-    const resetMs = parseFutureResetMs(resetTime, now)
-    return resetMs === undefined || resetMs > now
+    if (resetTime) {
+      const resetAt = Date.parse(resetTime)
+      if (!Number.isNaN(resetAt) && resetAt <= now) return false
+    }
+    return true
   }
   if (quota) {
     if (spent(quota.remainingFraction, quota.resetTime, 0)
@@ -612,10 +614,11 @@ export function isFamilyQuotaExhausted(account: ManagedAccount, family?: ModelFa
           const fraction = window.remainingFraction
           const threshold = window.window.toLowerCase() === 'weekly' ? WEEKLY_QUOTA_THRESHOLD : 0
           if (typeof fraction === 'number' && fraction <= threshold) {
-            const resetMs = parseFutureResetMs(window.resetTime ?? undefined, now)
-            if (resetMs === undefined || resetMs > now) {
-              return true
+            if (window.resetTime) {
+              const resetAt = Date.parse(window.resetTime)
+              if (!Number.isNaN(resetAt) && resetAt <= now) continue
             }
+            return true
           }
         }
       }
@@ -651,8 +654,11 @@ export function areAllModelGroupsExhausted(
         if (!isTracked) return false
         const threshold = w.window.toLowerCase() === 'weekly' ? WEEKLY_QUOTA_THRESHOLD : 0
         if (typeof w.remainingFraction !== 'number' || w.remainingFraction > threshold) return false
-        const resetMs = parseFutureResetMs(w.resetTime ?? undefined, now)
-        return resetMs === undefined || resetMs > now
+        if (w.resetTime) {
+          const resetAt = Date.parse(w.resetTime)
+          if (!Number.isNaN(resetAt) && resetAt <= now) return false
+        }
+        return true
       })
       if (hasSpentWindow) return true
 
@@ -671,8 +677,11 @@ export function areAllModelGroupsExhausted(
       if ((account.rateLimitResetTimes?.[fam] ?? 0) > now) return true
       const spent = (fraction: number | undefined, resetTime: string | undefined, threshold = 0): boolean => {
         if (typeof fraction !== 'number' || fraction > threshold) return false
-        const resetMs = parseFutureResetMs(resetTime, now)
-        return resetMs === undefined || resetMs > now
+        if (resetTime) {
+          const resetAt = Date.parse(resetTime)
+          if (!Number.isNaN(resetAt) && resetAt <= now) return false
+        }
+        return true
       }
       return spent(quota.remainingFraction, quota.resetTime, 0)
         || spent(quota.weeklyFraction, quota.weeklyResetTime, WEEKLY_QUOTA_THRESHOLD)

@@ -22,6 +22,7 @@
 
 import { QUOTA_WINDOWS, type QuotaGroup, type QuotaWindow } from '../types.ts'
 import { SOFT_QUOTA_THRESHOLD, WEEKLY_QUOTA_THRESHOLD, parseFutureResetMs } from '../runtime/rotation.ts'
+export { SOFT_QUOTA_THRESHOLD, WEEKLY_QUOTA_THRESHOLD }
 import type { AccountView } from '../rpc-contract.ts'
 import type { AgyLocaleKey } from './locales.ts'
 import { aliasVar } from './styles.ts'
@@ -395,11 +396,18 @@ function windowPressure(window: QuotaWindow, now: number): number | null {
  */
 export function pickBadgeWindow(limits: readonly QuotaGroup[] | null | undefined, now: number): QuotaWindow | null {
   if (!limits || limits.length === 0) return null
+  // 1. Any exhausted weekly window across any group takes absolute precedence
   for (const group of limits) {
     const candidates = rotationWindows(group)
-    if (candidates.length === 0) continue
-    let best: QuotaWindow | null = null
-    let bestPressure = Number.POSITIVE_INFINITY
+    const exhaustedWeekly = candidates.find((w) => w.window === 'weekly' && (effectiveFraction(w, now) ?? 1) <= WEEKLY_QUOTA_THRESHOLD)
+    if (exhaustedWeekly) return exhaustedWeekly
+  }
+
+  // 2. Window with highest pressure (smallest multiple) across all candidate groups
+  let best: QuotaWindow | null = null
+  let bestPressure = Number.POSITIVE_INFINITY
+  for (const group of limits) {
+    const candidates = rotationWindows(group)
     for (const window of candidates) {
       const pressure = windowPressure(window, now)
       if (pressure === null) continue
@@ -408,12 +416,10 @@ export function pickBadgeWindow(limits: readonly QuotaGroup[] | null | undefined
         bestPressure = pressure
       }
     }
-    if (best !== null) return best
-    return null
   }
-  // No group reports a window we block on: the shortest window that is still
-  // live is the best remaining proxy, so an upstream window vocabulary added
-  // later still yields a number instead of a fallback count.
+  if (best !== null) return best
+
+  // 3. Fallback: shortest usable window
   for (const group of limits) {
     const usable = sortWindows(group.windows).filter((window) => effectiveFraction(window, now) !== null)
     const first = usable[0]
@@ -538,8 +544,9 @@ export function accountQuotaRead(
  */
 export function isAccountQuotaExhausted(view: AccountView | undefined, now: number): boolean {
   if (!view) return false
+  if (view.state === 'cooling' && view.cooldownReason === 'quota-exhausted') return true
   const read = accountQuotaRead(view, now)
-  return read.fiveHour === 0 || read.weekly === 0
+  return (read.fiveHour !== null && read.fiveHour <= 0) || (read.weekly !== null && read.weekly <= WEEKLY_QUOTA_THRESHOLD)
 }
 
 /**
@@ -570,7 +577,7 @@ export function nextHealthyIndex(accounts: readonly AccountView[], now: number):
 
 /**
  * Whether one quota group is unusable right now: a window the pool blocks on
- * (`drainThresholdFor` — 5h or weekly) sits at exactly 0% while its reset is
+ * (`drainThresholdFor` — 5h or weekly) sits at or below threshold while its reset is
  * still ahead. The same shape the pool blocks on, narrowed to the one group: a
  * 0% whose reset already passed is a leftover from an ended period and never
  * counts, and an unmeasured fraction is unknown rather than spent.
@@ -579,7 +586,8 @@ export function isGroupQuotaExhausted(group: QuotaGroup, now: number): boolean {
   for (const window of group.windows) {
     if (drainThresholdFor(window.window) === undefined) continue
     const fraction = effectiveFraction(window, now)
-    if (fraction === null || fraction > 0) continue
+    const threshold = window.window.toLowerCase() === 'weekly' ? WEEKLY_QUOTA_THRESHOLD : 0
+    if (fraction === null || fraction > threshold) continue
     return true
   }
   return false
@@ -595,8 +603,10 @@ export function isGroupQuotaExhausted(group: QuotaGroup, now: number): boolean {
  * would freeze the board on nothing.
  */
 export function isAccountAllQuotaExhausted(view: AccountView | undefined, now: number): boolean {
-  if (!view?.limits || view.limits.length === 0) return false
+  if (!view) return false
   if (view.state === 'disabled') return true
+  if (view.state === 'cooling' && view.cooldownReason === 'quota-exhausted') return true
+  if (!view.limits || view.limits.length === 0) return false
   return view.limits.every((group) => isGroupQuotaExhausted(group, now))
 }
 
@@ -621,7 +631,8 @@ export function accountRecoveryTime(view: AccountView | undefined, now: number):
     for (const window of group.windows) {
       if (drainThresholdFor(window.window) === undefined) continue
       const fraction = effectiveFraction(window, now)
-      if (fraction === null || fraction > 0) continue
+      const threshold = window.window.toLowerCase() === 'weekly' ? WEEKLY_QUOTA_THRESHOLD : 0
+      if (fraction === null || fraction > threshold) continue
       const reset = parseFutureResetMs(window.resetTime ?? undefined, now)
       if (reset === undefined) {
         promised = false
