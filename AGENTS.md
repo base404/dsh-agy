@@ -9,25 +9,49 @@ tool (reusing the official client's quota machinery); Development uses pnpm (loc
 ## Repository Layout
 
 ```
-src/adapter/    DSH adapter: request translation (translate), SSE parsing (parse), model catalog (catalog/models)
+src/adapter/    DSH adapter: request translation (translate), SSE parsing (parse), model catalog (catalog/models), multimodal
 src/oauth/      OAuth: authorize/PKCE, code exchange, refresh, paste-blob codec, endpoint constants
-src/runtime/    State machine: 429 classification (classify), rotation decisions (rotation), fingerprints (fingerprint),
-                session/request id (identity), thoughtSignature caching, version freshness (version)
+src/runtime/    State machine & policy: 429 classification (classify), rotation decisions (rotation),
+                fingerprints (fingerprint), session/request id (identity), thoughtSignature caching,
+                version freshness (version), quota tracking & family mapping (quota)
 src/store/      Account storage: encrypted JSON file (accounts, proper-lockfile), master key / keyring doc (keyring),
                 data-dir layout + one-shot legacy migration (paths)
-src/session.ts  Shared runtime glue: token caching, rotation execution, fingerprint lifecycle, verify/test/export
-src/web/        Web plugin entry: management RPC (`/api/agy`) + OAuth callback route (loopback peers only)
-src/client/     Inline Settings section (browser half): 5 tabs over the management RPC,
-                UI primitives + bilingual dictionaries (locales.ts, styles.ts)
+src/session.ts  Shared runtime glue orchestrator coordinating session submodules
+src/session/    Session submodules:
+                - account-picker.ts: Candidate account selection, load balancing, cooldown/exhaustion checks
+                - quota-manager.ts: Quota probing, proactive cache management, smart idle detection
+                - token-manager.ts: Token cache, OAuth access token refresh
+                - affinity.ts: Session-to-account affinity mapping
+                - diagnostics.ts: Account verification, testing, proxy validation
+                - burn-rate.ts: Consumption tracking and burn-rate calculation
+                - in-flight.ts: In-flight request concurrency control
+                - account-support.ts: Account model support validation
+src/web/        Web plugin entry: management RPC (`/api/agy`, management.ts) + OAuth callback route (loopback peers only)
+src/client/     Inline Settings section & chat UI (browser half):
+                - index.ts: Entry registration & section orchestration
+                - settings-state.ts: Reactive client state, RPC polling, active account synchronization
+                - account-actions.ts: UI mutation actions (verify, switch, recover, test)
+                - quota-badge.ts: Conversation header quota badge, popover, smart-mode countdown
+                - quota-view.ts: Quota progress bars, reset countdown formatters, group status
+                - accounts-tab.ts, account-detail.ts: Account list & detail inspection cards
+                - usage-tab.ts, credentials-tab.ts: Usage charts & credential import/export tabs
+                - preferences-card.ts: Refresh intervals, smart mode, UI preferences
+                - config-cards.ts: Multimodal inline limits, model visibility, thinking budget
+                - locales.ts, styles.ts: Bilingual dictionaries & scoped CSS styles
 src/stats.ts    Cumulative usage ledger ($DSH_HOME/agy/agy-stats.json)
 src/recent-store.ts  Persisted recent-activity ring ($DSH_HOME/agy/agy-recent.json; 200-entry cap,
                 flush at 25 records / 30s / exit)
 src/model-visibility.ts  Hidden-model blacklist ($DSH_HOME/agy/agy-models.json)
-src/thinking-budget.ts   Global Low/Medium/High -> thinkingBudget map ($DSH_HOME/agy/agy-thinking.json);
-                         types split into thinking-types.ts so the client bundle stays node:*-free
+src/thinking-budget.ts   Global Low/Medium/High -> thinkingBudget map ($DSH_HOME/agy/agy-thinking.json;
+                         types split into thinking-types.ts so the client bundle stays node:*-free)
 src/multimodal-config.ts Per-file inline cap for non-image multimodal files
-                         ($DSH_HOME/agy/agy-multimodal.json; env > stored > 20MB default);
-                         types split into multimodal-types.ts for the same node:*-free reason
+                         ($DSH_HOME/agy/agy-multimodal.json; env > stored > 20MB default;
+                         types split into multimodal-types.ts for the same node:*-free reason)
+src/model-routing.ts     Dynamic model routing overrides (types in model-routing-types.ts)
+src/ui-prefs.ts          UI preferences storage ($DSH_HOME/agy/agy-ui-prefs.json, types in ui-prefs-types.ts)
+src/rpc-contract.ts      Typed RPC interface between web host and client
+src/proxy.ts             Proxy parsing, agent dispatch, and reachability testing
+src/redact.ts            Sensitive credential and token redaction helpers
 src/cli/        Standalone CLI (login/status/import/verify/logout) + loopback callback server
 tests/          Vitest test suite: fixture-driven, zero network
 docs/           Architecture & API facts (EN + zh); maintenance-oriented, not bundled in npm package
