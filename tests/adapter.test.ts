@@ -3287,7 +3287,7 @@ describe('AgyAdapter', () => {
     await expect(async () => {
       for await (const _ of adapter.stream(generateOptions())) void _
     }).rejects.toMatchObject({
-      code: 'QUOTA',
+      code: 'UPSTREAM',
       message: expect.stringContaining('(429): RESOURCE_EXHAUSTED'),
     })
     expect(failures[0]?.kind).toBe('rate-limit')
@@ -3720,7 +3720,7 @@ describe('AgyAdapter', () => {
     await expect(async () => {
       for await (const _ of adapter.stream(generateOptions())) void _
     }).rejects.toMatchObject({
-      code: 'QUOTA',
+      code: 'UPSTREAM',
     })
   })
 

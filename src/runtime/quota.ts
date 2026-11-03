@@ -28,7 +28,7 @@ import {
   computeSoftQuotaCacheTtlMs,
 } from './rotation.ts'
 
-export type ModelFamily = 'google' | 'anthropic' | 'openai'
+export type ModelFamily = 'google' | 'anthropic' | 'openai' | 'argon'
 
 /** Family bucket for model ids with no recognizable prefix (mirrors OMP's counter:unknown). */
 export const FAMILY_UNKNOWN = 'unknown'
@@ -44,6 +44,7 @@ const DRAIN_FLOOR_MS = 60_000
 export function modelFamilyOf(modelId?: string): ModelFamily | undefined {
   if (!modelId) return undefined
   const id = modelId.toLowerCase()
+  if (id.includes('argon')) return 'argon'
   if (id.startsWith('claude-')) return 'anthropic'
   if (id.startsWith('gemini-') || id.startsWith('gemma-')) return 'google'
   if (id.startsWith('gpt-') || id.startsWith('openai/')) return 'openai'
@@ -90,7 +91,8 @@ export function familiesForBucketId(bucketId: string, window?: string): ModelFam
     // Specific experimental variants must not block standard Google models
     return []
   }
-  if (id.startsWith('gemini-')) families.push('google')
+  if (id.includes('argon')) families.push('argon')
+  else if (id.startsWith('gemini-')) families.push('google')
   else if (id.startsWith('3p-') || id.startsWith('third_party-')) families.push('anthropic', 'openai')
   else if (id.startsWith('claude-')) families.push('anthropic')
   else if (id.startsWith('gpt-') || id.startsWith('openai-')) families.push('openai')
@@ -129,7 +131,8 @@ export function familiesForGroupName(name: string): ModelFamily[] {
     // Specific experimental variants must not block standard Google models
     return []
   }
-  if (label.includes('gemini') || label.includes('google')) families.push('google')
+  if (label.includes('argon')) families.push('argon')
+  else if (label.includes('gemini') || label.includes('google')) families.push('google')
   const claude = label.includes('claude')
   const gpt = label.includes('gpt')
   if (claude && gpt) families.push('anthropic', 'openai')

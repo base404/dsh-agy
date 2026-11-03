@@ -9,7 +9,6 @@ import {
   LlmAdapter,
   LlmError,
   ProviderRequestId,
-  QUOTA_EXCEEDED_CODE,
 } from '@deepseek-ai/dsh-llm'
 import type {
   GenerateOptions,
@@ -166,7 +165,6 @@ export interface AgyAdapterOptions {
   }): void
 }
 
-const UPSTREAM_ERROR_CODE = 'UPSTREAM'
 /** First-class DSH retryable code: the default retry policy honors SERVER (5xx), not UPSTREAM. */
 const SERVER_ERROR_CODE = 'SERVER'
 
@@ -440,7 +438,7 @@ export class AgyAdapter extends LlmAdapter {
       }
       if (error instanceof AgyPoolBlockedError) {
         if (error.kind === 'quota-exhausted') {
-          throw new LlmError(error.message, QUOTA_EXCEEDED_CODE)
+          throw new LlmError(error.message, 'UPSTREAM')
         }
         const delta = Math.ceil(error.blockedUntil - Date.now())
         const providerRetryAfterMs = Number.isFinite(delta) && delta > 0 ? delta : 1
@@ -591,7 +589,7 @@ export class AgyAdapter extends LlmAdapter {
           if (classified.rateLimitCategory === 'quota_exhausted') {
             throw new LlmError(
               `agy daily quota exhausted (${response.status}): ${detailMsg}`.trim(),
-              QUOTA_EXCEEDED_CODE,
+              'UPSTREAM',
             )
           }
           throw new LlmError(
@@ -646,12 +644,12 @@ export class AgyAdapter extends LlmAdapter {
         }
         throw new LlmError(
           `agy upstream error (${response.status}): ${classified.message ?? ''}`,
-          UPSTREAM_ERROR_CODE,
+          'UPSTREAM',
         )
       }
 
       if (!response.body) {
-        throw new LlmError('agy stream returned no body', UPSTREAM_ERROR_CODE)
+        throw new LlmError('agy stream returned no body', 'UPSTREAM')
       }
 
       // Buffer stream chunks while reasoning or tool calls accumulate. If
@@ -843,7 +841,7 @@ export class AgyAdapter extends LlmAdapter {
         // code is still surfaced so the socket failure is legible in session events.
         throw new LlmError(
           error instanceof Error ? describeFetchError(error) : 'agy stream parse failed',
-          UPSTREAM_ERROR_CODE,
+          'UPSTREAM',
           { cause: error },
         )
       }
