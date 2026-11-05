@@ -46,6 +46,14 @@ import {
   windowLabel,
   type QuotaTranslate,
 } from './quota-view.ts'
+import {
+  groupAtPhase,
+  badgeGroupLabel,
+  limitsOf,
+  readWindowAt,
+  rotationGroups,
+  windowForPhase,
+} from './quota-group.ts'
 import type { AccountView, AgyRpcClient, UiPrefsView } from '../rpc-contract.ts'
 import {
   DEFAULT_BADGE_DETAILED_MODE,
@@ -717,6 +725,8 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
   let badgeReadingStr: string
   let accountName: string | null = null
   let quotaText = ''
+  let quotaGroupShort = ''
+  let quotaGroupFull = ''
 
   if (!badgeDetailedMode) {
     // Non-detailed mode: the simple pill, kept in step with the last commit not
@@ -735,45 +745,57 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
     effectiveDotState = rawDot
     statusClass = ''
   } else {
-    // Detailed mode
-    const targetGroup = resolveQuotaGroup(
-      activeAccount?.limits,
-      badgeModelGroup === 'auto' ? activeAccount?.actualModel : badgeModelGroup,
+    // Detailed mode.
+    //
+    // `auto` ROTATES OVER EVERY GROUP whose weekly budget is not drained, one
+    // group per render phase — it does not "follow the actual route" and never
+    // did, despite the old label: an account that only ever routes Argon would
+    // otherwise print nothing but Argon, and the other two groups' budgets (one
+    // of them possibly the reason requests start being refused) would never
+    // appear. A MANUAL selection pins the group the user chose, drained or not.
+    //
+    // Drained groups are skipped because a 0-9% week is a number the pool has
+    // already benched: spending a rotation slot on it would push the groups that
+    // can still serve out of a 5-second glance. Turning `badgeSkipZeroWeekly`
+    // OFF admits them back into the rotation, so the 0% can be read on purpose.
+    const rotationPhase = Math.floor(now / RENDER_TICK_MS)
+    const eligible = rotationGroups(
+      limitsOf(activeAccount),
+      badgeModelGroup,
+      now,
+      badgeSkipZeroWeekly,
     )
-    const groupRead = accountQuotaRead(activeAccount, now, badgeModelGroup)
-    const modelLabel = modelLabelForGroup(targetGroup, activeAccount?.actualModel)
+    // One group on screen; with an empty rotation the manual/first group is
+    // shown rather than nothing, so a fully-benched account still states its 0%.
+    const targetGroup = eligible.length > 0
+      ? groupAtPhase(eligible, rotationPhase)
+      : (activeAccount?.limits?.[0] ?? null)
+    const shownWindow: '5h' | 'weekly' = targetGroup === null
+      ? '5h'
+      : windowForPhase(targetGroup, rotationPhase, badgeWindowType, now)
+    shownToken = shownWindow
+    shownFraction = targetGroup === null
+      ? null
+      : readWindowAt(targetGroup, shownWindow, now)
 
-    const has5h = groupRead.fiveHour !== null
-    const hasWeekly = groupRead.weekly !== null
-    const weeklyIsZero = groupRead.weekly !== null && groupRead.weekly <= WEEKLY_QUOTA_THRESHOLD
-    const fiveHourIsZero = groupRead.fiveHour !== null && groupRead.fiveHour <= 0
-
-    if (weeklyIsZero) {
-      shownToken = 'weekly'
-      shownFraction = groupRead.weekly
-    } else if (fiveHourIsZero) {
-      shownToken = '5h'
-      shownFraction = groupRead.fiveHour
-    } else if (badgeWindowType === '5h') {
-      shownToken = '5h'
-      shownFraction = groupRead.fiveHour
-    } else if (badgeWindowType === 'weekly') {
-      shownToken = 'weekly'
-      shownFraction = groupRead.weekly
-    } else {
-      const flipPhase = Math.floor(now / RENDER_TICK_MS) % 2
-      const showWeekly = has5h && hasWeekly
-        ? flipPhase === 1
-        : hasWeekly && !has5h
-      shownToken = showWeekly ? 'weekly' : '5h'
-      shownFraction = showWeekly ? groupRead.weekly : groupRead.fiveHour
-    }
+    // The label names the GROUP the figure came from. `modelLabelForGroup`
+    // collapses `gemini-4-argon-*` to "Gemini", which on this surface would make
+    // the Argon budget and the standard Gemini budget read as one number.
+    const modelLabel = targetGroup?.name ?? t('quotaGroupFallback')
+    const weeklyIsZero = shownToken === 'weekly'
+      && shownFraction !== null && shownFraction <= WEEKLY_QUOTA_THRESHOLD
 
     const shownWindowLabel = shownToken === 'weekly' ? t('badgeWindowWeekly') : t('badgeWindow5h')
     const shownWindowWithSpace = `${shownWindowLabel} `
     const shownPercent = toPercent(shownFraction) ?? 0
     accountName = activeAccount?.email ? desensitizeEmail(activeAccount.email) : null
-    quotaText = `${modelLabel} ${shownWindowWithSpace}${shownPercent}%`
+    // The pill itself prints the SHORT group name and window token
+    // (`badgeGroupLabel`, `badgeWindow*Short`): the full upstream name filled the
+    // fixed-width pill and clipped the window + percent. The full name stays on
+    // the group span's title; the tooltip keeps the long window label.
+    quotaGroupShort = targetGroup ? badgeGroupLabel(targetGroup) : modelLabel
+    quotaGroupFull = modelLabel
+    quotaText = `${shownToken === 'weekly' ? t('badgeWindowWeeklyShort') : t('badgeWindow5hShort')} ${shownPercent}%`
     displayText = shownFraction !== null && accountName !== null
       ? t('badgeAccountQuotaFormat', {
         account: accountName,
@@ -1145,6 +1167,7 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
             { className: 'agy-ui-badge-content' },
             h('span', { className: 'agy-ui-badge-account', title: activeAccount?.email ?? undefined }, accountName),
             h('span', { className: 'agy-ui-badge-sep' }, '·'),
+            h('span', { key: `g-${quotaGroupShort}`, className: 'agy-ui-badge-group agy-ui-badge-text', title: quotaGroupFull }, quotaGroupShort),
             h('span', { key: shownToken, className: 'agy-ui-badge-quota agy-ui-badge-text' }, quotaText),
           )
           : h('span', { key: shownToken, className: 'agy-ui-badge-text' }, displayText))

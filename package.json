@@ -63,7 +63,9 @@
     "verify:claude-parts": "tsx scripts/verify-claude-parts.mts",
     "verify:thinking-config": "tsx scripts/verify-thinking-config.mts",
     "verify:thinking-levels": "tsx scripts/verify-thinking-levels.mts",
-    "verify:dsh-llm-compat": "tsx scripts/verify-dsh-llm-compat.mts"
+    "verify:dsh-llm-compat": "tsx scripts/verify-dsh-llm-compat.mts",
+    "verify:argon-id": "tsx scripts/verify-argon-id.mts",
+    "fix:argon-fingerprint": "tsx scripts/fix-argon-fingerprint.mts"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",

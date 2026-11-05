@@ -559,8 +559,8 @@ export const AGY_STYLES_CSS = `
 }
 
 .agy-ui-badge-account {
-  min-width: 0;
-  flex: 0 1 auto;
+  min-width: 3em;
+  flex: 0 1000 auto;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -572,8 +572,20 @@ export const AGY_STYLES_CSS = `
   opacity: 0.65;
 }
 
+/* Shrink order inside the detailed pill: the account yields first (shrink
+   weight 1000, down to its 3em floor), then the group name ellipsizes; the
+   window token + percent never shrink, so the reading is always visible. */
+.agy-ui-badge-group {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .agy-ui-badge-quota {
   flex-shrink: 0;
+  margin-left: 0.3em;
   white-space: nowrap;
 }
 
