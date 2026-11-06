@@ -187,24 +187,26 @@ function makeHarness(options: {
 
 describe('agy management RPC', () => {
   it('updates cooldownUntil to earliest model recovery time when all model groups are exhausted', async () => {
+    const fixedNow = new Date('2026-11-04T00:00:00Z').getTime()
+    vi.spyOn(Date, 'now').mockReturnValue(fixedNow)
     const acc = account({
       email: 'saurabh@gmail.com',
-      coolingDownUntil: Date.now() + 60_000,
+      coolingDownUntil: fixedNow + 60_000,
       cooldownReason: 'quota-exhausted',
       cachedLimits: {
-        updatedAt: Date.now(),
+        updatedAt: fixedNow,
         groups: [
           {
             name: 'Gemini Models',
             windows: [
-              { bucketId: 'g-5h', window: '5h', remainingFraction: 1, resetTime: new Date(Date.now() + 3600_000 * 5).toISOString() },
+              { bucketId: 'g-5h', window: '5h', remainingFraction: 1, resetTime: new Date(fixedNow + 3600_000 * 5).toISOString() },
               { bucketId: 'g-weekly', window: 'weekly', remainingFraction: 0, resetTime: '2026-11-08T08:11:23Z' },
             ],
           },
           {
             name: 'Claude and GPT models',
             windows: [
-              { bucketId: '3p-5h', window: '5h', remainingFraction: 1, resetTime: new Date(Date.now() + 3600_000 * 5).toISOString() },
+              { bucketId: '3p-5h', window: '5h', remainingFraction: 1, resetTime: new Date(fixedNow + 3600_000 * 5).toISOString() },
               { bucketId: '3p-weekly', window: 'weekly', remainingFraction: 0, resetTime: '2026-11-05T21:33:48Z' },
             ],
           },

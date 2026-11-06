@@ -526,7 +526,12 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
       }
     }, RENDER_TICK_MS)
     const onWake = (): void => {
-      if (document.visibilityState !== 'hidden') void load(false)
+      if (document.visibilityState !== 'hidden') {
+        if (smartModeRef.current && refreshMinutes !== null && isSmartModeIdle(lastModelUsedRef.current, Date.now())) {
+          return
+        }
+        void load(false)
+      }
     }
     const onModelUsed = (e: Event): void => {
       const at = (e as CustomEvent<{ at?: number }>).detail?.at ?? Date.now()

@@ -279,7 +279,12 @@ export function useAgySettingsState(options: UseAgySettingsStateOptions) {
   }, [loadLimits, rpc])
 
   useEffect(() => {
-    if (tab === 'accounts' && accounts.length > 0) void loadLimits()
+    if (tab === 'accounts' && accounts.length > 0) {
+      if (smartModeRef.current && refreshMinutesRef.current !== null && isSmartModeIdle(lastModelUsedRef.current, Date.now())) {
+        return
+      }
+      void loadLimits()
+    }
   }, [tab, accounts.length, loadLimits])
 
   useEffect(() => {
