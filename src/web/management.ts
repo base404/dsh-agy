@@ -219,7 +219,7 @@ export function createAgyManagement(options: AgyManagementOptions): AgyManagemen
     const rows: AccountView[] = []
     for (const [index, account] of storage.accounts.entries()) {
 
-      if (account.cooldownReason === 'quota-exhausted' && areAllModelGroupsExhausted(account, undefined, now)) {
+      if (account.cooldownReason === 'quota-exhausted' && areAllModelGroupsExhausted(account, undefined, now) && !((account.manuallyRecoveredAt ?? 0) >= now)) {
         const recovery = computeAccountRecoveryTime(account, now)
         if (recovery !== null && recovery > now) {
           account.coolingDownUntil = recovery

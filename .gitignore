@@ -17,3 +17,5 @@ package-lock.json
 # editor/agent tooling
 .serena/
 .rtk/
+.codegraph/
+config/
