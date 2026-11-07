@@ -1,15 +1,15 @@
-# dsh-agy bundle patch: mounts the dsh-agy plugins into a dsh profile.
+# dsh-plugin-agy bundle patch: mounts the dsh-plugin-agy plugins into a dsh profile.
 
-# Install with: dsh plugin --profile <name> add dsh-agy
+# Install with: dsh plugin --profile <name> add dsh-plugin-agy
 # The loader inserts these rows; the main plugin registers the agy LLM adapter
 # and the web entry registers the management RPC (`/api/agy`) plus the OAuth
 # callback once ctx.webServer activates (it stays pending in profiles without a
-# web server). The management UI itself is the browser half (`dsh-agy/client`),
+# web server). The management UI itself is the browser half (`dsh-plugin-agy/client`),
 # an inline Settings section — there is no standalone dashboard route.
 
 - insert:
-    - id: dsh-agy
-      name: 'dsh-agy'
+    - id: dsh-plugin-agy
+      name: 'dsh-plugin-agy'
 
-    - id: dsh-agy-web
-      name: 'dsh-agy/web'
+    - id: dsh-plugin-agy-web
+      name: 'dsh-plugin-agy/web'

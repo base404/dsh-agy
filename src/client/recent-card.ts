@@ -88,17 +88,25 @@ export function RecentCard(props: { rpc: AgyRpcClient, t: T }): ReactNode {
 
   const now = Date.now()
 
-  return h('div', { className: 'agy-disclosure agy-recent', 'data-open': open },
-    h('button', {
-      type: 'button',
-      className: 'agy-disclosure-toggle',
+  return h('section', { className: 'agy-card agy-recent-card', 'data-open': open },
+    h('div', {
+      className: 'agy-card-head agy-clickable',
+      role: 'button',
+      tabIndex: 0,
       'aria-expanded': open,
       onClick: () => { setOpen(!open) },
+      onKeyDown: (event: { key: string, preventDefault: () => void }) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          setOpen(!open)
+        }
+      },
     },
-    h('span', { className: 'agy-caret' }),
-    h('span', null, t('recentTitle')),
-    recent === null ? null : h('span', { className: 'agy-disclosure-meta' }, String(recent.length))),
-    open === false ? null : h('div', { className: 'agy-disclosure-body' },
+      h('div', { className: 'agy-card-title-wrap' },
+        h('span', { className: 'agy-caret', 'data-open': open }),
+        h('span', { className: 'agy-card-title' }, t('recentTitle'))),
+      recent === null ? null : h('span', { className: 'agy-aside' }, String(recent.length))),
+    open === false ? null : h('div', { className: 'agy-card-body' },
       error === undefined ? null : h('div', { className: 'agy-error' }, error),
       recent === null
         ? h('div', { className: 'agy-empty' }, t('loading'))

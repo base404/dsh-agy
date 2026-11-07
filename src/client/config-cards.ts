@@ -110,7 +110,6 @@ export function ThinkingBudgetCard(props: { rpc: AgyRpcClient, t: T }): ReactNod
   const [claudeBudget, setClaudeBudget] = useState<number | null>(null)
   const [claudeDraft, setClaudeDraft] = useState('')
   const [drafts, setDrafts] = useState<Record<string, string>>({})
-  const [open, setOpen] = useState(false)
   const [error, setError] = useState<string | undefined>(undefined)
   const [loaded, setLoaded] = useState(false)
   const alive = useRef(true)
@@ -142,9 +141,7 @@ export function ThinkingBudgetCard(props: { rpc: AgyRpcClient, t: T }): ReactNod
     })()
   }, [rpc])
 
-  useEffect(() => {
-    if (open && !loaded) load()
-  }, [open, loaded, load])
+  useEffect(() => { load() }, [load])
 
   const save = (level: string, raw: string): void => {
     const trimmed = raw.trim()
@@ -208,62 +205,51 @@ export function ThinkingBudgetCard(props: { rpc: AgyRpcClient, t: T }): ReactNod
 
   const configured = THINKING_LEVELS.filter((level) => budgets[level] !== undefined).length
     + (tieredBudget === null ? 0 : 1)
-  const block = h('div', { className: 'agy-disclosure', 'data-open': open },
-    h('button', {
-      type: 'button',
-      className: 'agy-disclosure-toggle',
-      'aria-expanded': open,
-      onClick: () => { setOpen(!open) },
-    },
-    h('span', { className: 'agy-caret' }),
-    h('span', null, t('thinkingTitle')),
-    h('span', { className: 'agy-disclosure-meta' },
-      configured === 0 ? t('thinkingDefaultAll') : t('thinkingConfigured', { count: configured }))),
-    open
-      ? h('div', { className: 'agy-disclosure-body' },
-        error === undefined ? null : h('div', { className: 'agy-error' }, error),
-        h('div', { className: 'agy-thinking-group' },
-          h('div', { className: 'agy-thinking-group-name' }, t('thinkingGeminiGroup')),
-          h('p', { className: 'agy-hint' }, t('thinkingGeminiHint')),
-          h('ul', { className: 'agy-thinking-notes agy-thinking-effects' },
-            h('li', null, t('thinkingEffectLowUp')),
-            h('li', null, t('thinkingEffectHighDown')),
-            h('li', null, t('thinkingEffectMax')),
-            h('li', null, t('thinkingEffectReset')),
-            h('li', null, t('thinkingEffectProLevels'))),
-          thinkingRow('tiered', t('thinkingTieredLabel'), drafts.tiered ?? '', t, {
-            onInput: (value) => { setDrafts((c) => ({ ...c, tiered: value })) },
-            onCommit: (value) => {
-              const stored = tieredBudget === null ? '' : String(tieredBudget)
-              if (value.trim() !== stored) saveTiered(value)
-            },
-            chips: [{ label: t('thinkingChipClear'), value: '' }],
-          }),
-          ...THINKING_LEVELS.map((level) => thinkingRow(level, levelLabel(level, t), drafts[level] ?? '', t, {
-            onInput: (value) => { setDrafts((c) => ({ ...c, [level]: value })) },
-            onCommit: (value) => {
-              const stored = budgets[level] === undefined ? '' : String(budgets[level])
-              if (value.trim() !== stored) save(level, value)
-            },
-          })),
-          h(ThinkingSamples, { t })),
-        h('div', { className: 'agy-thinking-group' },
-          h('div', { className: 'agy-thinking-group-name' }, t('thinkingClaudeGroup')),
-          h('ul', { className: 'agy-thinking-notes' },
-            h('li', null, t('thinkingClaudeNoLevels', { min: CLAUDE_BUDGET_MIN, max: CLAUDE_BUDGET_MAX })),
-            h('li', null, t('thinkingClaudeMaxTokens')),
-            h('li', null, t('thinkingClaudeNoReport'))),
-          thinkingRow('claude', t('thinkingClaudeLabel'), claudeDraft, t, {
-            onInput: (value) => { setClaudeDraft(value) },
-            onCommit: (value) => {
-              const stored = claudeBudget === null ? '' : String(claudeBudget)
-              if (value.trim() !== stored) saveClaude(value)
-            },
-            chips: [{ label: t('thinkingChipClear'), value: '' }],
-          })))
-      : null)
+  const aside = configured === 0 ? t('thinkingDefaultAll') : t('thinkingConfigured', { count: configured })
 
-  return card(t('thinkingTitle'), block)
+  const body = h('div', { className: 'agy-card-body-padded' },
+    error === undefined ? null : h('div', { className: 'agy-error' }, error),
+    h('div', { className: 'agy-thinking-group' },
+      h('div', { className: 'agy-thinking-group-name' }, t('thinkingGeminiGroup')),
+      h('p', { className: 'agy-hint' }, t('thinkingGeminiHint')),
+      h('ul', { className: 'agy-thinking-notes agy-thinking-effects' },
+        h('li', null, t('thinkingEffectLowUp')),
+        h('li', null, t('thinkingEffectHighDown')),
+        h('li', null, t('thinkingEffectMax')),
+        h('li', null, t('thinkingEffectReset')),
+        h('li', null, t('thinkingEffectProLevels'))),
+      thinkingRow('tiered', t('thinkingTieredLabel'), drafts.tiered ?? '', t, {
+        onInput: (value) => { setDrafts((c) => ({ ...c, tiered: value })) },
+        onCommit: (value) => {
+          const stored = tieredBudget === null ? '' : String(tieredBudget)
+          if (value.trim() !== stored) saveTiered(value)
+        },
+        chips: [{ label: t('thinkingChipClear'), value: '' }],
+      }),
+      ...THINKING_LEVELS.map((level) => thinkingRow(level, levelLabel(level, t), drafts[level] ?? '', t, {
+        onInput: (value) => { setDrafts((c) => ({ ...c, [level]: value })) },
+        onCommit: (value) => {
+          const stored = budgets[level] === undefined ? '' : String(budgets[level])
+          if (value.trim() !== stored) save(level, value)
+        },
+      })),
+      h(ThinkingSamples, { t })),
+    h('div', { className: 'agy-thinking-group' },
+      h('div', { className: 'agy-thinking-group-name' }, t('thinkingClaudeGroup')),
+      h('ul', { className: 'agy-thinking-notes' },
+        h('li', null, t('thinkingClaudeNoLevels', { min: CLAUDE_BUDGET_MIN, max: CLAUDE_BUDGET_MAX })),
+        h('li', null, t('thinkingClaudeMaxTokens')),
+        h('li', null, t('thinkingClaudeNoReport'))),
+      thinkingRow('claude', t('thinkingClaudeLabel'), claudeDraft, t, {
+        onInput: (value) => { setClaudeDraft(value) },
+        onCommit: (value) => {
+          const stored = claudeBudget === null ? '' : String(claudeBudget)
+          if (value.trim() !== stored) saveClaude(value)
+        },
+        chips: [{ label: t('thinkingChipClear'), value: '' }],
+      })))
+
+  return card(t('thinkingTitle'), body, aside)
 }
 
 export function ModelRoutingCard(props: { rpc: AgyRpcClient; t: T }): ReactNode {

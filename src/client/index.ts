@@ -12,17 +12,18 @@
  * readable where nested `createElement` calls become a parenthesis maze.
  */
 
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ClientContext } from '@deepseek-ai/dsh-client-runtime/client'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-settings/client'
-import { Switch } from '@deepseek-ai/dsh-client-ui-primitives'
+import { Input, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import { installAgyStyles } from './styles.ts'
 import { en, zh, type AgyLocaleKey } from './locales.ts'
 import { h } from './element.ts'
 import { AgyQuotaBadge } from './quota-badge.ts'
 import type {
+  AccountView,
   AgyRpcClient,
   ModelView,
   UiPrefsView,
@@ -50,6 +51,7 @@ import {
   MultimodalCard,
   ModelRoutingCard,
 } from './config-cards.ts'
+import { PreferencesCard } from './preferences-card.ts'
 import { UsageTab } from './usage-tab.ts'
 import { CredentialsTab } from './credentials-tab.ts'
 import { useAgySettingsState } from './settings-state.ts'
@@ -111,14 +113,20 @@ function ModelsTab(props: {
   t: T
 }): ReactNode {
   const { models, account, pending, testing, onToggle, onTestModel, t } = props
+  const [query, setQuery] = useState('')
   const ordered = useMemo(() => orderModels(models), [models])
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return ordered
+    return ordered.filter((m) => m.name.toLowerCase().includes(q) || m.id.toLowerCase().includes(q))
+  }, [ordered, query])
 
   if (models.length === 0) {
     return card(t('modelsTitle'), h('div', { className: 'agy-empty' }, t('emptyModels')))
   }
   const hidden = models.filter((model) => model.disabled).length
 
-  const rows = ordered.map((model) => h('div', { className: 'agy-rowitem', key: model.id },
+  const rows = filtered.map((model) => h('div', { className: 'agy-rowitem', key: model.id },
     h('div', { className: 'agy-rowmain' },
       h('div', { className: 'agy-rowtitle' },
         h('span', { className: 'agy-rowname' }, model.name)),
@@ -136,18 +144,41 @@ function ModelsTab(props: {
         onChange: () => { onToggle(model.id, !model.disabled) },
       }))))
 
+  const searchBox = models.length > 5
+    ? h('div', { className: 'agy-model-search' },
+      h(Input, {
+        value: query,
+        placeholder: t('modelSearchPlaceholder'),
+        onChange: (e: { target: { value: string } }) => { setQuery(e.target.value) },
+      }))
+    : null
+
+  const content = filtered.length === 0
+    ? h('div', { className: 'agy-empty' }, t('emptyFilteredModels'))
+    : h('div', { className: 'agy-rows' }, ...rows)
+
   return h('div', { className: 'agy-root' },
-    card(t('modelsTitle'), h('div', { className: 'agy-rows' }, ...rows),
+    card(t('modelsTitle'),
+      h('div', null,
+        searchBox,
+        content),
       hidden > 0 ? t('modelsHiddenSuffix', { count: hidden }) : account ?? undefined),
     hint(t('modelsHelp')))
 }
 
-function ConfigTab(props: { rpc: AgyRpcClient, t: T }): ReactNode {
-  const { rpc, t } = props
+function ConfigTab(props: {
+  rpc: AgyRpcClient
+  t: T
+  accounts?: AccountView[]
+  onBadgePrefChange?: (enabled: boolean) => void
+  onDetailedPrefChange?: (enabled: boolean) => void
+}): ReactNode {
+  const { rpc, t, accounts, onBadgePrefChange, onDetailedPrefChange } = props
   return h('div', { className: 'agy-root' },
+    h(PreferencesCard, { rpc, t, accounts, onBadgePrefChange, onDetailedPrefChange }),
+    h(ModelRoutingCard, { rpc, t }),
     h(ThinkingBudgetCard, { rpc, t }),
-    h(MultimodalCard, { rpc, t }),
-    h(ModelRoutingCard, { rpc, t }))
+    h(MultimodalCard, { rpc, t }))
 }
 
 // ─── root ────────────────────────────────────────────────────────────────────
@@ -306,9 +337,17 @@ export function AgySettings(props: {
           h('div', { className: 'agy-error' }, modelError),
           button(t('refresh'), () => { void loadModels() }, { size: 'sm' }))
       : tab === 'config'
-        ? h(ConfigTab, { rpc, t })
+        ? h(ConfigTab, {
+          rpc,
+          t,
+          accounts,
+          onBadgePrefChange: props.onBadgePrefChange,
+          onDetailedPrefChange: (enabled: boolean) => {
+            setDetailedQuotaReset(enabled)
+          },
+        })
         : tab === 'usage'
-          ? h(UsageTab, { stats, lang: props.lang, t })
+          ? h(UsageTab, { stats, lang: props.lang, t, rpc })
           : h(CredentialsTab, {
           busy,
           t,
@@ -333,6 +372,7 @@ export function AgySettings(props: {
             void act(async () => {
               const { blobs } = await rpc.call('account.exportAll', {})
               await copyText(blobs.map((entry) => entry.blob).join('\n'))
+              setNotice(t('exportAllSuccess', { count: blobs.length }))
             })
           },
         })
@@ -380,7 +420,7 @@ export function apply(ctx: ClientContext): void {
     badgeDisposer = ctx.slots.inject('conversation.session.header.actions', () => ctx.slots.register({
       name: 'conversation.session.header.actions',
       id: 'agy-quota-badge',
-      order: 8,
+      order: 100,
       label: () => t('title'),
     }, () => h(AgyQuotaBadge, { rpc, t })))
   }

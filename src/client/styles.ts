@@ -125,8 +125,21 @@ export const AGY_STYLES_CSS = `
   border-bottom: 0.5px solid ${aliasVar('border-l1')};
   background: ${aliasVar('bg-layer-2')};
 }
+.agy-card-head.agy-clickable {
+  cursor: pointer;
+  user-select: none;
+}
+.agy-card-head.agy-clickable:hover {
+  background: ${aliasVar('interactive-bg-hover')};
+}
+.agy-card-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 .agy-card-title { font: var(--dsw-font-xs-strong-13); color: ${aliasVar('label-primary')}; }
 .agy-card-body { padding: 6px 12px 8px; }
+.agy-card-body-padded { padding: 10px 12px 12px; }
 
 /* ── Rows inside a card ────────────────────────────────────────────────────
    Follows DSH's own list-row convention (ui-sidebar .panelRow): a 12px-radius
@@ -286,6 +299,8 @@ export const AGY_STYLES_CSS = `
   border-top: 3.5px solid transparent; border-bottom: 3.5px solid transparent;
   transition: transform .15s ease;
 }
+.agy-caret[data-open="true"],
+.agy-card[data-open="true"] .agy-caret,
 .agy-disclosure[data-open="true"] .agy-caret { transform: rotate(90deg); }
 .agy-disclosure-body { padding-bottom: 8px; }
 /* One row per reasoning level: label, then the budget input. The input is
@@ -427,6 +442,9 @@ export const AGY_STYLES_CSS = `
   border: 0.5px solid ${aliasVar('border-l2')}; border-radius: 8px; }
 .agy-textarea:focus { border-color: ${aliasVar('brand-primary')}; }
 
+.agy-model-search { margin: 2px 2px 8px; }
+.agy-credential-box { display: flex; flex-direction: column; gap: 8px; padding: 4px 0; }
+
 .agy-select {
   font: var(--dsw-font-xs-13);
   color: ${aliasVar('label-primary')};
@@ -474,6 +492,20 @@ export const AGY_STYLES_CSS = `
 }
 
 /* ── Preferences card ───────────────────────────────────────────────────── */
+.agy-pref-group {
+  display: flex;
+  flex-direction: column;
+}
+.agy-pref-group + .agy-pref-group {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 0.5px solid ${aliasVar('border-l1')};
+}
+.agy-pref-group-title {
+  font: var(--dsw-font-xxs-strong-12);
+  color: ${aliasVar('label-secondary')};
+  margin-bottom: 6px;
+}
 .agy-pref-row {
   display: flex;
   align-items: center;
@@ -484,6 +516,16 @@ export const AGY_STYLES_CSS = `
 .agy-pref-row + .agy-pref-row {
   border-top: 0.5px solid ${aliasVar('border-l1')};
   padding-top: 10px;
+}
+.agy-pref-subrow {
+  margin-left: 14px;
+  padding-left: 12px;
+  border-left: 0.5px solid ${aliasVar('border-l2')};
+}
+.agy-pref-subrow-nested {
+  margin-left: 26px;
+  padding-left: 12px;
+  border-left: 0.5px solid ${aliasVar('border-l1')};
 }
 .agy-pref-name {
   font: var(--dsw-font-xs-strong-13);

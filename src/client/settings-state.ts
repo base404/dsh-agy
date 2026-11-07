@@ -155,7 +155,8 @@ export function useAgySettingsState(options: UseAgySettingsStateOptions) {
 
   const loadLimits = useCallback(async (force = false, report = false, index?: number, auto = false) => {
     const intervalMinutes = refreshMinutesRef.current
-    if (auto && smartModeRef.current && refreshMinutesRef.current !== null) {
+    const isManual = report
+    if (!isManual && smartModeRef.current && refreshMinutesRef.current !== null) {
       if (smartPausedUntilRef.current !== null) {
         const until = smartPausedUntilRef.current
         if (Date.now() < until) return

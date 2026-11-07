@@ -388,6 +388,10 @@ export function AgyQuotaBadge({ rpc, t }: { rpc: AgyRpcClient, t: QuotaTranslate
       if (smartModeRef.current && refreshMinutes !== null && isSmartModeIdle(lastModelUsedRef.current, currentNow)) {
         isIdlePausedRef.current = true
         setIsIdlePaused(true)
+        if (!isManual) {
+          setError(null)
+          return
+        }
       }
       setError(null)
 

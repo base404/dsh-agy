@@ -469,7 +469,8 @@ async function proxyListCommand() {
 export function createProgram(): Command {
   const program = new Command()
   program
-    .name('dsh-agy')
+    .name('dsh-plugin-agy')
+    .alias('dsh-agy')
     .description('Google Antigravity (agy) account management for DeepSeek Harness')
     .version(PACKAGE_VERSION)
 

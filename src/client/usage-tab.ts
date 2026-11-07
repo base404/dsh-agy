@@ -8,9 +8,10 @@ import { Pill } from '@deepseek-ai/dsh-client-ui-primitives'
 import { h } from './element.ts'
 import { aliasVar } from './styles.ts'
 import type { AgyLocaleKey } from './locales.ts'
-import type { StatsView } from '../rpc-contract.ts'
+import type { AgyRpcClient, StatsView } from '../rpc-contract.ts'
 import type { UsageCounters } from '../usage-types.ts'
 import type { T } from './types.ts'
+import { RecentCard } from './recent-card.ts'
 import {
   average,
   cacheHitPercent,
@@ -59,7 +60,7 @@ export function tokenComposition(counters: UsageCounters, t: T): ReactNode {
   }))
 }
 
-export function UsageTab(props: { stats: StatsView | null, lang?: string, t: T }): ReactNode {
+export function UsageTab(props: { stats: StatsView | null, lang?: string, t: T, rpc?: AgyRpcClient }): ReactNode {
   const { t } = props
   const [range, setRange] = useState<RangeId>('today')
   const stats = props.stats
@@ -171,5 +172,6 @@ export function UsageTab(props: { stats: StatsView | null, lang?: string, t: T }
   )
 
   return h('div', { className: 'agy-root' },
-    rangePicker, summary, timing, trend, byModel, byAccount)
+    rangePicker, summary, timing, trend, byModel, byAccount,
+    props.rpc ? h(RecentCard, { rpc: props.rpc, t }) : null)
 }

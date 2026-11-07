@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { Input, Switch } from '@deepseek-ai/dsh-client-ui-primitives'
 import { h } from './element.ts'
+import { card } from './components.ts'
 import type { AccountView, AgyRpcClient } from '../rpc-contract.ts'
 import { ACTION_MESSAGE_TTL_MS, type T } from './types.ts'
 import {
@@ -297,133 +298,153 @@ export function PreferencesCard(props: {
   const availableGroups = (activeAccount?.limits ?? accounts?.flatMap((a) => a.limits ?? []) ?? [])
     .filter((g, idx, arr) => arr.findIndex((x) => x.name === g.name) === idx)
 
-  const rows = [
-    h('div', { className: 'agy-pref-row', key: 'autoRotate' },
-      h('div', { className: 'agy-pref-info' },
-        h('div', { className: 'agy-pref-name' }, t('prefAutoRotateAccounts')),
-        h('div', { className: 'agy-pref-desc' }, t('prefAutoRotateAccountsDesc'))),
-      h(Switch, {
-        label: t('prefAutoRotateAccounts'),
-        checked: autoRotateAccounts,
-        disabled: loading || saving,
-        onChange: (checked: boolean) => void toggleAutoRotateAccounts(checked),
-      })),
-    h('div', { className: 'agy-pref-row', key: 'detailed' },
-      h('div', { className: 'agy-pref-info' },
-        h('div', { className: 'agy-pref-name' }, t('prefDetailedQuotaReset')),
-        h('div', { className: 'agy-pref-desc' }, t('prefDetailedQuotaResetDesc'))),
-      h(Switch, {
-        label: t('prefDetailedQuotaReset'),
-        checked: detailedReset,
-        disabled: loading || saving,
-        onChange: (checked: boolean) => void toggleDetailed(checked),
-      })),
-    h('div', { className: 'agy-pref-row', key: 'refresh' },
-      h('div', { className: 'agy-pref-info' },
-        h('div', { className: 'agy-pref-name' }, t('prefQuotaRefresh')),
-        h('div', { className: 'agy-pref-desc' }, t('prefQuotaRefreshDesc'))),
-      h('div', { className: 'agy-pref-refresh' },
-        h(Input, {
-          value: minutesDraft,
-          placeholder: t('prefQuotaRefreshNever'),
-          inputMode: 'numeric',
-          disabled: loading || saving || refreshMinutes === null,
-          title: t('prefQuotaRefreshInterval'),
-          'aria-label': t('prefQuotaRefreshInterval'),
-          onChange: (event: { target: { value: string } }) => { setMinutesDraft(event.target.value) },
-          onBlur: commitMinutesDraft,
-          onKeyDown: (event: { key: string }) => { if (event.key === 'Enter') commitMinutesDraft() },
-        }),
-        ...(refreshMinutes !== null
-          ? [h('span', { className: 'agy-pref-unit', key: 'unit' }, t('prefQuotaRefreshUnit'))]
-          : []),
-        h(Switch, {
-          label: t('prefQuotaRefresh'),
-          checked: refreshMinutes !== null,
-          disabled: loading || saving,
-          onChange: (checked: boolean) => void toggleAutoRefresh(checked),
-        }))),
-    refreshMinutes !== null
-      ? h('div', { className: 'agy-pref-row', key: 'smartMode' },
-          h('div', { className: 'agy-pref-info' },
-            h('div', { className: 'agy-pref-name' }, t('prefSmartMode')),
-            h('div', { className: 'agy-pref-desc' }, t('prefSmartModeDesc'))),
-          h(Switch, {
-            label: t('prefSmartMode'),
-            checked: smartMode,
-            disabled: loading || saving,
-            onChange: (checked: boolean) => void toggleSmartMode(checked),
-          }))
-      : null,
-    h('div', { className: 'agy-pref-row', key: 'badge' },
-      h('div', { className: 'agy-pref-info' },
-        h('div', { className: 'agy-pref-name' }, t('prefConversationBadge')),
-        h('div', { className: 'agy-pref-desc' }, t('prefConversationBadgeDesc'))),
-      h(Switch, {
-        label: t('prefConversationBadge'),
-        checked: badgeEnabled,
-        disabled: loading || saving,
-        onChange: (checked: boolean) => void toggleBadge(checked),
-      })),
-    badgeEnabled
-      ? h('div', { className: 'agy-pref-row', key: 'detailedMode' },
-          h('div', { className: 'agy-pref-info' },
-            h('div', { className: 'agy-pref-name' }, t('prefBadgeDetailedMode')),
-            h('div', { className: 'agy-pref-desc' }, t('prefBadgeDetailedModeDesc'))),
-          h(Switch, {
-            label: t('prefBadgeDetailedMode'),
-            checked: badgeDetailedMode,
-            disabled: loading || saving,
-            onChange: (checked: boolean) => void toggleDetailedMode(checked),
-          }))
-      : null,
-    badgeEnabled && badgeDetailedMode
-      ? h('div', { className: 'agy-pref-row', key: 'modelGroup' },
-          h('div', { className: 'agy-pref-info' },
-            h('div', { className: 'agy-pref-name' }, t('prefBadgeModelGroup'))),
-          h('select', {
-            className: 'agy-select agy-pref-select',
-            value: badgeModelGroup,
-            disabled: loading || saving,
-            title: t('prefBadgeModelGroup'),
-            'aria-label': t('prefBadgeModelGroup'),
-            onChange: (e: { target: { value: string } }) => void saveBadgeModelGroup(e.target.value),
-          },
-          h('option', { value: 'auto' }, t('prefBadgeModelGroupAuto')),
-          ...availableGroups.map((g) => h('option', { key: g.name, value: g.name }, g.name))))
-      : null,
-    badgeEnabled && badgeDetailedMode
-      ? h('div', { className: 'agy-pref-row', key: 'windowType' },
-          h('div', { className: 'agy-pref-info' },
-            h('div', { className: 'agy-pref-name' }, t('prefBadgeWindowType'))),
-          h('select', {
-            className: 'agy-select agy-pref-select',
-            value: badgeWindowType,
-            disabled: loading || saving,
-            title: t('prefBadgeWindowType'),
-            'aria-label': t('prefBadgeWindowType'),
-            onChange: (e: { target: { value: string } }) => void saveBadgeWindowType(e.target.value as BadgeWindowType),
-          },
-          h('option', { value: 'both' }, t('prefBadgeWindowBoth')),
-          h('option', { value: '5h' }, t('prefBadgeWindow5h')),
-          h('option', { value: 'weekly' }, t('prefBadgeWindowWeekly'))))
-      : null,
-    badgeEnabled && badgeDetailedMode && badgeWindowType === 'both'
-      ? h('div', { className: 'agy-pref-row', key: 'skipZeroWeekly' },
-          h('div', { className: 'agy-pref-info' },
-            h('div', { className: 'agy-pref-name' }, t('prefBadgeSkipZeroWeekly')),
-            h('div', { className: 'agy-pref-desc' }, t('prefBadgeSkipZeroWeeklyDesc'))),
-          h(Switch, {
-            label: t('prefBadgeSkipZeroWeekly'),
-            checked: badgeSkipZeroWeekly,
-            disabled: loading || saving,
-            onChange: (checked: boolean) => void toggleSkipZeroWeekly(checked),
-          }))
-      : null,
-  ].filter((item): item is ReactNode => item !== null)
+  const autoRotateRow = h('div', { className: 'agy-pref-row', key: 'autoRotate' },
+    h('div', { className: 'agy-pref-info' },
+      h('div', { className: 'agy-pref-name' }, t('prefAutoRotateAccounts')),
+      h('div', { className: 'agy-pref-desc' }, t('prefAutoRotateAccountsDesc'))),
+    h(Switch, {
+      label: t('prefAutoRotateAccounts'),
+      checked: autoRotateAccounts,
+      disabled: loading || saving,
+      onChange: (checked: boolean) => void toggleAutoRotateAccounts(checked),
+    }))
 
-  return h('section', { className: 'agy-card' },
-    h('div', { className: 'agy-card-body' },
-      ...rows,
+  const detailedResetRow = h('div', { className: 'agy-pref-row', key: 'detailed' },
+    h('div', { className: 'agy-pref-info' },
+      h('div', { className: 'agy-pref-name' }, t('prefDetailedQuotaReset')),
+      h('div', { className: 'agy-pref-desc' }, t('prefDetailedQuotaResetDesc'))),
+    h(Switch, {
+      label: t('prefDetailedQuotaReset'),
+      checked: detailedReset,
+      disabled: loading || saving,
+      onChange: (checked: boolean) => void toggleDetailed(checked),
+    }))
+
+  const refreshRow = h('div', { className: 'agy-pref-row', key: 'refresh' },
+    h('div', { className: 'agy-pref-info' },
+      h('div', { className: 'agy-pref-name' }, t('prefQuotaRefresh')),
+      h('div', { className: 'agy-pref-desc' }, t('prefQuotaRefreshDesc'))),
+    h('div', { className: 'agy-pref-refresh' },
+      h(Input, {
+        value: minutesDraft,
+        placeholder: t('prefQuotaRefreshNever'),
+        inputMode: 'numeric',
+        disabled: loading || saving || refreshMinutes === null,
+        title: t('prefQuotaRefreshInterval'),
+        'aria-label': t('prefQuotaRefreshInterval'),
+        onChange: (event: { target: { value: string } }) => { setMinutesDraft(event.target.value) },
+        onBlur: commitMinutesDraft,
+        onKeyDown: (event: { key: string }) => { if (event.key === 'Enter') commitMinutesDraft() },
+      }),
+      ...(refreshMinutes !== null
+        ? [h('span', { className: 'agy-pref-unit', key: 'unit' }, t('prefQuotaRefreshUnit'))]
+        : []),
+      h(Switch, {
+        label: t('prefQuotaRefresh'),
+        checked: refreshMinutes !== null,
+        disabled: loading || saving,
+        onChange: (checked: boolean) => void toggleAutoRefresh(checked),
+      })))
+
+  const smartModeRow = refreshMinutes !== null
+    ? h('div', { className: 'agy-pref-row agy-pref-subrow', key: 'smartMode' },
+        h('div', { className: 'agy-pref-info' },
+          h('div', { className: 'agy-pref-name' }, t('prefSmartMode')),
+          h('div', { className: 'agy-pref-desc' }, t('prefSmartModeDesc'))),
+        h(Switch, {
+          label: t('prefSmartMode'),
+          checked: smartMode,
+          disabled: loading || saving,
+          onChange: (checked: boolean) => void toggleSmartMode(checked),
+        }))
+    : null
+
+  const badgeRow = h('div', { className: 'agy-pref-row', key: 'badge' },
+    h('div', { className: 'agy-pref-info' },
+      h('div', { className: 'agy-pref-name' }, t('prefConversationBadge')),
+      h('div', { className: 'agy-pref-desc' }, t('prefConversationBadgeDesc'))),
+    h(Switch, {
+      label: t('prefConversationBadge'),
+      checked: badgeEnabled,
+      disabled: loading || saving,
+      onChange: (checked: boolean) => void toggleBadge(checked),
+    }))
+
+  const detailedModeRow = badgeEnabled
+    ? h('div', { className: 'agy-pref-row agy-pref-subrow', key: 'detailedMode' },
+        h('div', { className: 'agy-pref-info' },
+          h('div', { className: 'agy-pref-name' }, t('prefBadgeDetailedMode')),
+          h('div', { className: 'agy-pref-desc' }, t('prefBadgeDetailedModeDesc'))),
+        h(Switch, {
+          label: t('prefBadgeDetailedMode'),
+          checked: badgeDetailedMode,
+          disabled: loading || saving,
+          onChange: (checked: boolean) => void toggleDetailedMode(checked),
+        }))
+    : null
+
+  const modelGroupRow = badgeEnabled && badgeDetailedMode
+    ? h('div', { className: 'agy-pref-row agy-pref-subrow agy-pref-subrow-nested', key: 'modelGroup' },
+        h('div', { className: 'agy-pref-info' },
+          h('div', { className: 'agy-pref-name' }, t('prefBadgeModelGroup'))),
+        h('select', {
+          className: 'agy-select agy-pref-select',
+          value: badgeModelGroup,
+          disabled: loading || saving,
+          title: t('prefBadgeModelGroup'),
+          'aria-label': t('prefBadgeModelGroup'),
+          onChange: (e: { target: { value: string } }) => void saveBadgeModelGroup(e.target.value),
+        },
+        h('option', { value: 'auto' }, t('prefBadgeModelGroupAuto')),
+        ...availableGroups.map((g) => h('option', { key: g.name, value: g.name }, g.name))))
+    : null
+
+  const windowTypeRow = badgeEnabled && badgeDetailedMode
+    ? h('div', { className: 'agy-pref-row agy-pref-subrow agy-pref-subrow-nested', key: 'windowType' },
+        h('div', { className: 'agy-pref-info' },
+          h('div', { className: 'agy-pref-name' }, t('prefBadgeWindowType'))),
+        h('select', {
+          className: 'agy-select agy-pref-select',
+          value: badgeWindowType,
+          disabled: loading || saving,
+          title: t('prefBadgeWindowType'),
+          'aria-label': t('prefBadgeWindowType'),
+          onChange: (e: { target: { value: string } }) => void saveBadgeWindowType(e.target.value as BadgeWindowType),
+        },
+        h('option', { value: 'both' }, t('prefBadgeWindowBoth')),
+        h('option', { value: '5h' }, t('prefBadgeWindow5h')),
+        h('option', { value: 'weekly' }, t('prefBadgeWindowWeekly'))))
+    : null
+
+  const skipZeroWeeklyRow = badgeEnabled && badgeDetailedMode && badgeWindowType === 'both'
+    ? h('div', { className: 'agy-pref-row agy-pref-subrow agy-pref-subrow-nested', key: 'skipZeroWeekly' },
+        h('div', { className: 'agy-pref-info' },
+          h('div', { className: 'agy-pref-name' }, t('prefBadgeSkipZeroWeekly')),
+          h('div', { className: 'agy-pref-desc' }, t('prefBadgeSkipZeroWeeklyDesc'))),
+        h(Switch, {
+          label: t('prefBadgeSkipZeroWeekly'),
+          checked: badgeSkipZeroWeekly,
+          disabled: loading || saving,
+          onChange: (checked: boolean) => void toggleSkipZeroWeekly(checked),
+        }))
+    : null
+
+  return card(t('prefTitle'),
+    h('div', null,
+      h('div', { className: 'agy-pref-group', key: 'groupRotation' },
+        h('div', { className: 'agy-pref-group-title' }, t('prefGroupRotation')),
+        autoRotateRow),
+      h('div', { className: 'agy-pref-group', key: 'groupRefresh' },
+        h('div', { className: 'agy-pref-group-title' }, t('prefGroupRefresh')),
+        refreshRow,
+        ...(smartModeRow ? [smartModeRow] : []),
+        detailedResetRow),
+      h('div', { className: 'agy-pref-group', key: 'groupBadge' },
+        h('div', { className: 'agy-pref-group-title' }, t('prefGroupBadge')),
+        badgeRow,
+        ...(detailedModeRow ? [detailedModeRow] : []),
+        ...(modelGroupRow ? [modelGroupRow] : []),
+        ...(windowTypeRow ? [windowTypeRow] : []),
+        ...(skipZeroWeeklyRow ? [skipZeroWeeklyRow] : [])),
       saveError === null ? null : h('div', { className: 'agy-error' }, saveError)))
 }

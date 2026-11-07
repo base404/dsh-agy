@@ -1,284 +1,362 @@
-# dsh-agy（中文文档）
+# dsh-plugin-agy（中文文档）
 
-[![CI](https://github.com/chaos-03x/dsh-agy/actions/workflows/ci.yml/badge.svg)](https://github.com/chaos-03x/dsh-agy/actions/workflows/ci.yml)
-[![npm version](https://img.shields.io/npm/v/dsh-agy)](https://www.npmjs.com/package/dsh-agy)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20.18.1-brightgreen.svg)](https://nodejs.org/)
+[![DSH Plugin](https://img.shields.io/badge/DSH-Plugin-orange.svg)](https://github.com/deepseek-ai/deepseek-harness)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg)](https://www.typescriptlang.org/)
 
-为 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供 Google Antigravity (agy) 接入：
-OAuth 认证、多账号池 + 自动 429 轮换、设备指纹伪装，以及 CLI 与 Web 双管理入口。
+**dsh-plugin-agy** 是专为 [DeepSeek Harness (DSH)](https://github.com/deepseek-ai/deepseek-harness) 打造的 Google Antigravity (agy) 模型接入插件与独立命令行工具。提供全流程自动化 OAuth 2.0 登录、带配额感知的多账号池与 429 智能轮换、双滚动配额窗口监控（5 小时与周额度）、设备指纹伪装，以及原生内嵌的 Web 设置面板与终端管理套件。
 
-> English: [README.md](../README.md)
+> 🌐 **语言导航**  
+> [简体中文文档](docs/README_zh.md) | [English Documentation](../README.md)
 
+---
 
-## 功能
+> 💡 **致谢与项目渊源 (Acknowledgement)**  
+> 本项目（`dsh-plugin-agy`）遵循 **MIT 开源协议**，基于并深度优化自 [chaos-03x/dsh-agy](https://github.com/chaos-03x/dsh-agy)。衷心感谢原作者 [@chaos-03x](https://github.com/chaos-03x) 及其社区贡献者的开创性探索与卓越架构设计！本项目在此基础上保持活跃维护，并持续推进面向 DeepSeek Harness 最新生态的体验与工程优化。
 
-- **OAuth 登录**: 通过浏览器 OAuth 回调一键登录，支持 headless 粘贴 URL 模式与远程粘贴凭据 blob 通道。
-- **双管理入口**: web 和 cli 任选其一，核心功能一致。
-- **多账号池**: 加密账号存储、用量感知选号（模型族配额 + OMP 对齐排名）、限流自动轮换、冷却到真实 reset 时间、每账号设备指纹。
-- **内联设置界面**: DSH 设置内的 Antigravity 分区，含五个标签页——账号（登录、激活、分组的 5 小时/每周配额窗口、测试调用、指纹与代理管理）、
-  模型（逐模型可见性）、配置（思考预算、多模态内联上限）、用量（累计 token 与请求统计）、凭据（导入/导出）。不再是独立页面：入口只存在于 DSH 设置之内。
-- **会话头部配额徽章**: 把当前账号最紧的配额窗口（5 小时 / 每周）显示为会话头部的单个数字，
-  悬停展开各窗口的剩余额度与重置时间。读取的就是设置面板同一份分组配额窗口，两处不会互相矛盾。
-- **模型可见性开关**: 把单个模型从 DSH 模型选择器中隐藏。黑名单语义——只有你主动关闭的才隐藏，
-  服务端后续新增的模型仍然可见。
-- **用量统计**: 输入 / 输出 / 缓存读 / 缓存写 token、请求数、失败数、限流、轮换、延迟与首 token 时间，
-  按账号与模型两个维度聚合。**包含不经过 DSH 的调用**（CLI、验证、测试），这是任何基于会话的统计都看不到的部分。
-- **CLI**: `dsh-agy login|status|import|verify|logout`，独立于 harness 运行。
+---
 
-## 效果演示
+## 📑 目录
 
-DSH 设置内的 Antigravity 分区。账号邮箱与项目名已打码。
+- [核心功能](#-核心功能)
+- [界面演示](#-界面演示)
+- [快速开始](#-快速开始)
+  - [路径 A：DSH Web UI 用户（推荐，0 CLI 命令）](#路径-adsh-web-ui-用户推荐0-cli-命令)
+  - [路径 B：无桌面 / 纯终端环境（独立 CLI）](#路径-b无桌面--纯终端环境独立-cli)
+  - [路径 C：本地源码开发与 Link 调试](#路径-c本地源码开发与-link-调试)
+- [CLI 命令行参考](#-cli-命令行参考)
+  - [每账号独立代理管理](#每账号独立代理管理)
+- [深入核心机制](#-深入核心机制)
+  - [1. 5 小时与周额度双窗口配额与轮换机制](#1-5-小时与周额度双窗口配额与轮换机制)
+  - [2. 429 智能分流与限流状态机](#2-429-智能分流与限流状态机)
+  - [3. 思考预算（Reasoning Effort）深度分析](#3-思考预算reasoning-effort深度分析)
+  - [4. 上游缓存机制对比（Antigravity vs DeepSeek）](#4-上游缓存机制对比antigravity-vs-deepseek)
+  - [5. 存储架构与密钥安全](#5-存储架构与密钥安全)
+- [风险管控与环境变量](#-风险管控与环境变量)
+- [卸载指南](#-卸载指南)
+- [风险声明](#-风险声明)
+- [参考项目与致谢](#-参考项目与致谢)
+- [开源协议](#-开源协议)
 
-| 账号 | 模型 |
+---
+
+## ✨ 核心功能
+
+- **🔑 零摩擦 OAuth 2.0 认证**:
+  - 本地回环回调一键登录：浏览器点击授权，自动回调完成握手。
+  - 支持 Headless 纯文本终端 URL 复制粘贴授权。
+  - 支持跨设备凭据 Blob（`--blob`）导入导出通道，无需在远端服务器重新登录。
+
+- **🔄 智能多账号池与 429 自动轮换**:
+  - 本地加密存储多账号，用量感知调度（基于模型族配额与 OMP 对齐排名算法）。
+  - **双窗口独立配额监控**：精确跟踪 5 小时滚动窗口与 7 天自然周窗口，杜绝周配额耗尽造成的长时间锁死。
+  - **精准 429 状态分类器**：自动区分软限流（极速同号重试）、服务端指定 reset 冷却（自动轮换下一号）、以及真实额度耗尽（冷却至重置时间）。
+  - 自动账号冷却对齐，服务恢复自动解除锁定。
+
+- **🎨 深度融合的 DSH 原生设置界面**:
+  - 直接嵌入 DSH 核心设置：位于 **设置 → Antigravity**（无需启动独立前端服务或记忆独立端口）。
+  - **账号页（Accounts）**：多账号登录、一键激活、5h/周配额条图、端到端接口健康测试、设备指纹与专属代理配置。
+  - **模型页（Models）**：逐模型可见性开关，黑名单语义设计（官方新增模型默认自动显示）。
+  - **配置页（Config）**：自定义推理思考 Token 预算（Low/Medium/High/最高 65535）与多模态非图片文件单文件内联上限（1-100 MB）。
+  - **用量页（Usage）**：精准累计输入、输出、缓存读、缓存写 Token 统计，涵盖请求数、失败率、轮换次数及 TTFT 首字延迟。
+  - **凭据页（Credentials）**：安全导出和导入凭据文件与加密 Blob。
+
+- **🏷️ 会话头部实时配额徽章（Quota Badge）**:
+  - 原生内嵌于 DSH 会话顶部标题栏。
+  - 实时提炼当前活动账号最紧绷的配额余量（5h 与周额度之最小值）。
+  - 鼠标悬停即刻展开各模型族窗口余量百分比与服务端重置倒计时。
+
+- **🛡️ 银行级安全加密与环境隔离**:
+  - 账号落盘采用 AES-256-GCM 工业级加密；主密钥严格保存在 `~/.dsh/.credentials.yaml` 中，权限锁定 `0600`。
+  - Loopback 本地防线，外部网络无法探测管理接口。
+  - 支持每账号独立绑定 SOCKS5 / HTTP 代理，内置 2 秒 TCP 快速连通性探测。
+  - 动态指纹混淆与稳定指纹策略自由切换。
+
+- **💻 跨平台独立命令行（`dsh-plugin-agy` / `dsh-agy`）**:
+  - 全套命令行支持，脱离 DSH harness 亦可在纯 Linux VPS、CI/CD 自动化脚本中稳定运行。
+
+---
+
+## 📸 界面演示与视觉预览
+
+原生无缝集成到 DeepSeek Harness 设置中心与聊天会话顶栏：
+
+### 1. 会话顶栏配额胶囊与多模型族状态浮层
+实时提炼当前活动账号的紧缩配额水位，悬停即见 Gemini、Claude/GPT、Gemini 4 Argon 各分组的 5 小时与周度配额余量及倒计时：
+
+<p align="center">
+  <img src="../assets/quota_badge_popover.png" alt="会话顶栏配额胶囊与状态浮层" width="460" />
+</p>
+
+### 2. 多账号池管理与性能指标看板
+多账号状态监控、一键设为当前、一键验证、专属代理配置、设备指纹重建以及端到端延迟与 Token 吞吐量统计：
+
+<p align="center">
+  <img src="../assets/settings_accounts.png" alt="多账号管理与性能指标看板" width="680" />
+</p>
+
+### 3. 智能调度偏好与顶栏胶囊配置
+支持自动轮换开关、高精度配额重置倒计时、智能休眠（闲置与耗尽时自适应暂停轮询）、会话顶栏胶囊与详细分组轮播模式：
+
+<p align="center">
+  <img src="../assets/settings_preferences.png" alt="智能偏好与顶栏胶囊配置" width="680" />
+</p>
+
+### 4. 逐模型可见性与用量分析看板
+
+| 逐模型可见性黑名单控制 | 全周期用量统计分析 |
 |:---:|:---:|
-| ![账号](https://raw.githubusercontent.com/chaos-03x/dsh-agy/main/assets/zh_accounts.png) | ![模型](https://raw.githubusercontent.com/chaos-03x/dsh-agy/main/assets/zh_models.png) |
-| **限额** —— 5 小时与每周窗口 | **用量** —— 累计、按模型、按账号 |
-| ![限额](https://raw.githubusercontent.com/chaos-03x/dsh-agy/main/assets/zh_limits.png) | ![用量](https://raw.githubusercontent.com/chaos-03x/dsh-agy/main/assets/zh_usage.png) |
+| ![模型可见性](../assets/zh_models.png) | ![用量统计](../assets/zh_usage.png) |
 
-## 快速开始
+---
 
-### 路径 A：DSH Web 用户（推荐：全流程纯 Web UI，0 CLI 命令）
+## 🚀 快速开始
 
-适用于使用 DeepSeek Harness 桌面/浏览器工作台的用户：
+### 路径 A：DSH Web UI 用户（推荐，0 CLI 命令）
+
+适用于使用 DeepSeek Harness 桌面端或浏览器工作台的用户：
 
 ```sh
-# 1. 向 DSH web profile 添加插件（支持 dsh 命令行，若未全局安装可用 pnpx/npx）
-dsh plugin --profile web add dsh-agy
-# 或：npx @deepseek-ai/dsh plugin --profile web add dsh-agy
+# 1. 向 DSH web profile 添加 dsh-plugin-agy 插件
+dsh plugin --profile web add dsh-plugin-agy
+# 若未将 dsh 加入全局 PATH，可直接使用 npx：
+# npx @deepseek-ai/dsh plugin --profile web add dsh-plugin-agy
 
-# 2. 启动 DSH Web
+# 2. 启动 DSH Web 界面
 dsh web
 
-# 3. 打开 设置 → Antigravity，点击该分区内的「登录」
-# 点击【Google 账号登录】，完成授权后即刻在 DSH 中直接调用 agy provider
+# 3. 点击顶部导航「设置」→「Antigravity」
+# 在账号标签页点击「Google 账号登录」，完成授权后立即开启对话！
 ```
 
-该分区位于 **设置 → Antigravity**（与「通用」「模型」同级）。没有独立仪表盘页面：旧的 `/agy` 地址已废弃。
+> **管理界面在哪里？**  
+> 打开 DSH 界面中的 **设置 → Antigravity**（与通用设置、模型设置同级）。所有配置与用量直接在设置中查看。
 
+---
 
-### 路径 B：无桌面 / 纯终端环境（CLI 独立使用）
+### 路径 B：无桌面 / 纯终端环境（独立 CLI）
 
-适用于 Linux VPS、SSH 远程服务器或纯脚本自动化环境：
+适用于 Linux VPS、远程 SSH 会话或无图形界面的 CI/CD 自动化流水线：
 
 ```sh
-# 免全局安装即用（npx / pnpx）
-npx dsh-agy login
-npx dsh-agy status
+# 免全局安装快速执行（通过 npx / pnpx）
+npx dsh-plugin-agy login
+npx dsh-plugin-agy status
 
-# 或全局安装后使用
-npm install -g dsh-agy
-dsh-agy login          # 交互式 OAuth（浏览器 / --headless 粘贴 / --blob）
-dsh-agy status         # 账号列表 + 每模型配额摘要
-dsh-agy verify         # 逐账号 refresh + userinfo 校验
-dsh-agy import <file>  # 导入 agy CLI auth.json 或凭据 blob（--blob）
-dsh-agy logout         # 删除账号
+# 或全局安装 CLI
+npm install -g dsh-plugin-agy
+
+# 交互式 OAuth 登录（支持浏览器自动回调、--headless 粘贴重定向 URL 或 --blob 导出）
+dsh-plugin-agy login
+
+# 查看当前已绑定的账号池、活动账号及配额状态
+dsh-plugin-agy status
+
+# 手动触发逐账号 Token 刷新与可用性校验
+dsh-plugin-agy verify
+
+# 批量后台健康检查巡检
+dsh-plugin-agy health
+
+# 导入现有的 agy CLI auth.json 或凭据 blob
+dsh-plugin-agy import <file>
+
+# 移除指定账号
+dsh-plugin-agy logout
 ```
 
-## CLI 命令参考
+*(说明：原命令行别名 `dsh-agy` 完全保留，功能完全一致)*
 
-| 命令 | 参数 | 说明 |
-|---|---|---|
-| `dsh-agy login` | `--headless` — 打印授权 URL，等待粘贴重定向 URL<br>`--blob` — 输出凭据 blob 而不保存账号<br>`--port <n>` — loopback 回调端口（默认 `51121`）<br>`--project <id>` — 绑定登录到指定项目<br>`--timeout <ms>` — 回调超时（默认 `300000`） | 交互式 Google OAuth |
-| `dsh-agy status` | — | 账号列表 + 每模型配额摘要 |
-| `dsh-agy import <文件...>` | `--blob` — 输入是凭据 blob<br>`--email <email>` — 指定邮箱（跳过 userinfo 校验）<br>`--overwrite` — 覆盖同邮箱的已有账号 | 导入 agy auth.json 文件或凭据 blob（多文件 / 多行粘贴 = 批量导入） |
-| `dsh-agy export` | `--index <n>` — 只导出指定账号（默认全部）<br>`--out <dir>` — 每账号写一个 `dsh-agy-<index>.blob` 文件（默认输出到 stdout，每行一个 blob） | 将账号凭据导出为粘贴 blob |
-| `dsh-agy verify` | `--index <n>` — 只验证指定账号（默认全部） | refresh + 健康检查 |
-| `dsh-agy health` | `--index <n...>` — 只检查指定账号（默认全部启用账号）<br>`--interval <ms>` — 按间隔重复检查 | 批量健康检查（refresh + userinfo），凭据恢复有效的账号自动重新启用 |
-| `dsh-agy logout` | `--index <n>` — 账号索引（默认当前 active）<br>`--email <email>` — 账号邮箱 | 删除账号 |
+---
 
-### 每账号代理（Per-account proxy）
+### 路径 C：本地源码开发与 Link 调试
 
-每个账号可独立配置代理；凭据落盘加密，展示时脱敏为 `protocol//host:port`。
+适用于希望对插件进行二次开发或本地源码调试的开发者：
 
 ```sh
-dsh-agy login --proxy socks5://user:pass@host:1080
-dsh-agy import --proxy <url> file.json
-dsh-agy proxy set --index 0 --proxy <url>   # 设置/更新
-dsh-agy proxy clear --index 0               # 清除（回退到环境变量代理）
-dsh-agy proxy test --index 0                # TCP 2s fast-fail 探测
-dsh-agy proxy list                          # 脱敏列表
-dsh-agy status                              # 展示 proxy 列（脱敏 host:port）
-```
+# 1. 克隆代码仓库
+git clone https://github.com/base404/dsh-agy.git
+cd dsh-agy
 
-回退：未配置每账号代理时，请求走 `EnvHttpProxyAgent`（`HTTP_PROXY`/`HTTPS_PROXY` 且遵循 `NO_PROXY`）。每账号代理忽略 `NO_PROXY`、fail-closed（代理不可达则跳过该账号、不写冷却并清除亲和），且 loopback 目标（`localhost`/`127.0.0.1`/`::1`）始终强制直连。
+# 2. 安装依赖并编译打包
+pnpm install
+pnpm run build
 
-设置 → Antigravity → 账号详情内有 Proxy 行 `[输入框] [保存][清除][测试]`，显示脱敏 `host:port`；读写与探测都走管理 RPC（`account.proxy` / `account.proxyTest`）。「保存」要求输入非空——清除已有代理是显式的「清除」动作，不会因误点空保存而丢失。「测试」探测的是输入框里的内容，所以未保存的代理可以先测再存；结果在提示行里显示可达/不可达，无可探测对象时按钮置灰并把原因放在悬停提示上。
-
-工具栏「刷新」除重载账号列表与用量账本外，还会突破 5 小时/每周配额窗口的 10 分钟 TTL 缓存重新测量——这次强制探测会回报刷新了几个账号，因此点击不会毫无反馈。自动重载仍遵守 TTL，不产生上游调用。
-
-### 路径 C：本地源码开发与调试（Link 模式）
-
-```sh
-git clone https://github.com/chaos-03x/dsh-agy.git
-cd dsh-agy && pnpm install && pnpm run build
+# 3. 将本地项目软链至 DSH 插件目录
 dsh plugin --profile web link .
+
+# 4. 执行本地测试套件
+pnpm test
 ```
 
-要求 Node >= 20。
+> 运行环境要求：Node.js >= 20.18.1（推荐 Node 22 以上版本）。
 
-## 卸载
+---
+
+## 🛠️ CLI 命令行参考
+
+| 命令 | 常用参数 | 描述 |
+|---|---|---|
+| `dsh-plugin-agy login` | `--headless`：打印授权 URL，等待粘贴重定向地址<br>`--blob`：直接输出凭据 blob 而不保存到本地<br>`--port <n>`：回调监听端口（默认 `51121`）<br>`--project <id>`：绑定至指定项目 ID<br>`--timeout <ms>`：登录等待超时（默认 `300000`） | 交互式 Google OAuth 授权验证 |
+| `dsh-plugin-agy status` | — | 列出账号池中所有账号、启用状态、独立代理及各模型族配额概览 |
+| `dsh-plugin-agy import <files...>` | `--blob`：输入为凭据 blob<br>`--email <email>`：指定邮箱地址<br>`--overwrite`：覆盖同邮箱的已有账号记录 | 导入外部 `auth.json` 或凭据 blob（支持多文件/批量导入） |
+| `dsh-plugin-agy export` | `--index <n>`：仅导出指定索引账号（默认导出全部）<br>`--out <dir>`：按账号写入独立 blob 文件 | 将本地已存储账号导出为安全凭据 blob |
+| `dsh-plugin-agy verify` | `--index <n>`：仅校验指定账号 | 执行 OAuth Token 刷新与 userinfo 端到端健康检查 |
+| `dsh-plugin-agy health` | `--index <n...>`：指定检查账号<br>`--interval <ms>`：按设定时间间隔重复检测 | 自动化健康检查守护，凭据恢复正常的账号将自动解除挂起 |
+| `dsh-plugin-agy logout` | `--index <n>`：账号序号（默认活动账号）<br>`--email <email>`：指定邮箱 | 从本地安全数据库中注销并移除该账号 |
+| `dsh-plugin-agy proxy ...` | `set`、`clear`、`test`、`list` | 详细查看与配置逐账号专属网络代理 |
+
+### 每账号独立代理管理
+
+多账号池场景下，每个账号支持绑定专有的代理通道；代理凭据在本地 AES 加密，输出时自动脱敏为 `protocol://host:port`。
 
 ```sh
-# 1. 从 profile 移除 DSH 插件
-dsh plugin --profile web remove dsh-agy
+# 登录或导入时直接指定账号专属代理
+dsh-plugin-agy login --proxy socks5://user:pass@127.0.0.1:1080
+dsh-plugin-agy import --proxy http://127.0.0.1:7890 auth.json
 
-# 2. 卸载 CLI
-npm uninstall -g dsh-agy
-
-# 3. 可选：删除本地账号数据（整个 agy 数据文件夹）
-dsh-agy logout              # 先删除账号（或跳过）
-rm -rf ~/.dsh/agy           # 账号、用量统计、模型可见性、思考预算、最近请求
-# 只删除 ~/.dsh/.credentials.yaml 中的 AGY_MASTER_KEY 行——保留其他键！
-# （从 ≤0.4 升级可能在 ~/.dsh 本身留下旧版文件：rm -f ~/.dsh/agy-*.json）
-
-# 4. 可选：撤销 Google 侧授权
-#    Google 账号安全设置 → 第三方访问 → 撤销 "Antigravity"
+# 为已有账号配置或更新代理
+dsh-plugin-agy proxy set --index 0 --proxy socks5://127.0.0.1:1080
+dsh-plugin-agy proxy test --index 0               # 执行 2 秒 TCP 连通性快速探测
+dsh-plugin-agy proxy clear --index 0              # 清除专属代理（自动回退至全局环境变量）
+dsh-plugin-agy proxy list                         # 查看所有账号的脱敏代理清单
 ```
 
-删除本地文件**不会**撤销 Google 侧的 token——refresh token 在过期或你在 Google 账号
-安全设置中手动撤销前仍然有效。
+- **代理回退机制**：
+  - 配置了专属代理的账号：请求严格走专属代理，且自动忽略 `NO_PROXY` 规则。
+  - 未配置专属代理的账号：自动继承系统环境变量代理（`HTTP_PROXY` / `HTTPS_PROXY`，遵守 `NO_PROXY`）。
+  - 本地回环地址（`127.0.0.1`、`localhost`、`::1`）始终强制直连。
+  - 代理探测遵循 Fail-Closed 原则：当专属代理不可达时，立即跳过该账号轮换至下一账号，避免无意义的错误重试。
 
-## 其他你可能关心的事
+---
 
-### 思考预算（reasoning effort）
+## 🧠 深入核心机制
 
-思考预算是 API 里的一个隐藏参数，用来控制模型思考的努力程度。上游给其中几个取值起了名字，这就是你在模型选择器里看到的 reasoning effort（high / medium / low）。填入预算会替换掉原本的 high / medium / low 传给模型，而不是叠加。
+### 1. 5 小时与周额度双窗口配额与轮换机制
 
-因此，自定义预算可以达到以下效果：
+Google Antigravity 针对各模型族（`gemini-*`、`claude-*`、`gpt-*`）采取差异化的双层限流模型，两层周期的补充机制截然不同：
 
-- **让低档想得更多** —— 在 `Low` 行填入较大数值。
-- **让高档想得更少**（更快、更省）—— 在 `High` 行填入较小数值。
-- **获得最大思考** —— 直接选 `High`，不必填值。
-- **恢复该档默认** —— 清空该行。
-
-模型会基于预算，根据问题难度自适应调整思考长短。这张表格展示了测试中，Gemini 3.8 Flash 在不同预算下，对不同难度题目的实际思考消耗（单位：token）：
-
-| 设置 | 简单题 | 中等题 | 困难题 |
+| 配额窗口 | 恢复刷新周期 | 判定耗尽阈值 | 阻断冷却时长 |
 |---|---|---|---|
-| Default | ~135 | ~1,100 | ~48,700 |
-| Low | ~50 | 0 | ~9,000 |
-| Medium | ~150 | ~870 | ~60,400 |
-| High | ~165 | ~1,855 | ~63,400 |
-| 填入 65535 | ~185 | ~2,130 | ~62,900 |
+| **5 小时滚动窗口** | 每 5 小时持续补充 | 剩余配额低于 15% | 阻断至该 5 小时周期重置点 |
+| **每周自然窗口** | 每 7 天整体刷新 | 剩余配额低于或等于 1% | **阻断至自然周刷新重置点** |
 
-填入最大值（65535）与选 High 在困难题上完全相同，但可以提高简单题和中等题的思考程度（约 10–15%）。数值决定效果——同一数值填在任意一行，发出的请求完全相同。
+- **为什么必须双窗口联动监控？** 一个账号的 5 小时窗口完全可能剩余 90%，但其周度总配额已经耗尽。如果只看短期窗口，请求依然会失败并触发长时间封锁。本插件独立监控两个闸门，提前感知周配额耗尽并主动绕开，保护账号不陷入长时间停摆。
+- **“不用白不用”（Use it or lose it）算法**：在多个可用账号中，算法优先选派配额即将刷新且仍有宽裕余额的账号，实现全池用量最大化。
 
-注：困难题使用一道组合计数推导题（推导铺砖递推式并求第 40 项），中等题使用一道数论证明题（证明 n⁴+4 恒为合数），简单题使用一道两位数乘法。
+### 2. 429 智能分流与限流状态机
 
-### 轮换机制
+HTTP 429 不代表粗暴的失败。`dsh-plugin-agy` 内置精准的状态机处理管道：
 
-用量感知选号：多账号时，按请求模型对应的后端计数器族（`gemini-*` → Google、
-`claude-*` → Anthropic、`gpt-*` → OpenAI）排序——即将到期且仍有额度的账号优先
-使用（"不用白不用"），接近耗尽的族会被避开，完全耗尽的族会把账号阻断到真实
-reset 时间。
+```mermaid
+flowchart TD
+    Err[上游返回 429 / 限流信号] --> Classify{状态分类器}
+    Classify -->|Retry-After < 3s| Soft[soft_rate_limit: 同账号极速重试, 不写冷却]
+    Classify -->|上报明确 Reset 时间| Rate[rate_limited: 冷却至重置时间, 自动切换账号]
+    Classify -->|RESOURCE_EXHAUSTED / 配额触顶| Quota[quota_exhausted: 阻断该账号至多24小时]
+    Classify -->|短暂网络波动 / 未知错误| Exp[unknown: 指数退避重试]
+```
 
-每个族都测量**两个**窗口，因为它们按不同节奏回满：
+- **401/403 甄别**：普通 401 标记账号需重新认证；对于包含 `RESOURCE_EXHAUSTED` 字样的 403 错误，系统自动识别为临时配额触顶，绝不误杀吊销正常账号。
 
-| 窗口 | 回满周期 | 判定耗尽 | 阻断至 |
-|---|---|---|---|
-| 5 小时滚动 | 每 5 小时 | 剩余低于 15% | 5 小时窗口的 reset |
-| 每周 | 每 7 天 | 剩余不足 1% | **周**窗口的 reset |
+### 3. 思考预算（Reasoning Effort）深度分析
 
-两个闸门互相独立。一个族完全可能 5 小时预算还剩 90%、但周额度已经用尽——四次
-5 小时回满也换不回周预算——因此周额度耗尽的账号会被轮换掉，而不是被选中后请求
-失败。两个阈值刻意不同（5 小时的 15% ≈ 45 分钟余量；一周的 1% ≈ 1.7 小时）：
-5 小时判断晚了的代价是最多等五小时，周判断晚了的代价是账号停摆数天。
+Gemini 推理模型支持通过内部参数调节思维链（CoT）深度。本插件支持用户自定义填入思考 Token 预算（数值范围 1 至 65535）：
 
-周额度只来自 `retrieveUserQuotaSummary`——逐模型的 `fetchAvailableModels` 探测
-完全没有窗口字段——且一次两个窗口都未上报的探测无法抹掉已知耗尽的读数。
+- **低档提智**：在 `Low` 填入适中数值，让模型既保持低消耗又具备充分思考。
+- **高档控量**：在 `High` 设置较小上限，防止简单任务陷入过度发散思考，节省配额与时间。
+- **顶格思考**：填入 `65535`，在极具挑战的逻辑和代码推导中完全释放模型最强算力。
 
-429 (Too Many Requests)响应：
+*Gemini 3.8 Flash 在不同题目难度与思考预算下的实测消耗对比（单位：Token）：*
 
-| 分类 | 行为 |
-|---|---|
-| `soft_rate_limit`（Retry-After < 3s） | 同账号立即重试，不冷却 |
-| `rate_limited` | 冷却到服务端上报的 reset 时间（上限 30 分钟，无上报时 5 分钟）+ 切换到下一账号（单账号时冷却后重试同号） |
-| `quota_exhausted`（"quota reached"/"individual quota"/RESOURCE_EXHAUSTED…） | 冷却到服务端上报的 reset 时间（上限 24 小时）——到点前不再尝试调用该账号 |
-| `unknown` | 指数退避 |
+| 预算设置 | 简单运算题 | 中等数论推导题 | 困难组合递推题 |
+|---|:---:|:---:|:---:|
+| **默认设置 (Default)** | ~135 | ~1,100 | ~48,700 |
+| **低档 (Low)** | ~50 | 0 | ~9,000 |
+| **中档 (Medium)** | ~150 | ~870 | ~60,400 |
+| **高档 (High)** | ~165 | ~1,855 | ~63,400 |
+| **顶格填入 65535** | ~185 | ~2,130 | ~62,900 |
 
-401/403 → 账号吊销（标记需重新认证）。成功重置失败计数。
+### 4. 上游缓存机制对比（Antigravity vs DeepSeek）
 
-### 风险管控（环境开关）
+很多用户疑问：*为什么使用 agy 时前几轮缓存命中率不是像 DeepSeek 那样直接达到 99%？*
 
-| 环境变量 | 作用 |
-|---|---|
-| `DSH_AGY_DISABLE=1` | 总开关：插件不注册任何东西（provider + 设置分区 + 会话头部配额徽章 + OAuth 回调），CLI 拒绝运行。 |
-| `DSH_AGY_FINGERPRINT_MODE=stable` | 每账号固定一个客户端身份——不做逐请求随机头、不再生指纹（OMP 式固定客户端姿态）。默认 `dynamic` 保持逐请求随机。 |
-| `DSH_AGY_HEALTH_INTERVAL_MS=<ms>` | harness 内后台批量健康探测（按间隔 refresh + userinfo）；默认关闭。 |
-| `DSH_AGY_IDLE_TIMEOUT_MS=<ms>` | 单次 SSE 读的静默预算（默认 `180000`，即 3 分钟；`0` 关闭）。body 不再出字节时放弃该次读取，而不是让整轮挂死；每来一个字节即重置，因此长时间的推理停顿不受影响。亦接受 `AGY_IDLE_TIMEOUT_MS` 别名。 |
-| `DSH_AGY_MULTIMODAL_MAX_INLINE_MB=<mb>` | 非图片多模态文件的单文件内联上限（MB，1–100）。优先于「配置」标签页里的设置；无法解析或越界的值会被忽略，回落到已保存值或 20MB 默认值。 |
-| `AGY_CLIENT_ID` / `AGY_CLIENT_SECRET` | 自备 OAuth App 逃生通道：覆盖内置的公开 Antigravity 客户端凭据。 |
+1. **启用门槛不同**：DeepSeek 缓存零门槛生效；Antigravity 的 Gemini 系列模型要求系统提示词与请求前缀累计达到约 **16k Token** 时才触发缓存写入。因此新对话的前 1-2 轮通常显示 0% 命中，待上下文越过 16k 门槛后命中率将迅速拉升。
+2. **缓存更新存在滞后**：DeepSeek 每轮结束即刻更新缓存；Antigravity 缓存落盘存在约 2 轮的延迟——第 N 轮新增的上下文通常在第 N+2 轮才开始生效。随着长对话进行，整体命中率会稳定收敛至极高水平。
 
+### 5. 存储架构与密钥安全
 
-### 关于缓存命中：为什么达不到 DeepSeek V4 的 99%？
+所有数据统一收敛至用户根目录 `~/.dsh/agy/` 下（支持 `$DSH_HOME` 环境变量整体迁移）：
 
-结论：**缓存命中策略由模型提供商（在我们的项目中，指的是 Antigravity）的缓存机制决定；agy 的机制有
-两处和 DeepSeek 不同，决定了它的命中率天然比 DeepSeek 低一截。**
+```text
+~/.dsh/
+├── .credentials.yaml        # 存储主密钥 AGY_MASTER_KEY (0600 权限)
+└── agy/
+    ├── agy-accounts.json     # AES-256-GCM 加密账号数据库 (0600 权限)
+    ├── agy-stats.json        # 累计 Token 与请求统计账本 (0600 权限)
+    ├── agy-models.json       # 隐藏模型黑名单 (0600 权限)
+    ├── agy-thinking.json     # 用户自定义思考预算映射 (0600 权限)
+    ├── agy-multimodal.json   # 多模态文件内联上限设定 (0600 权限)
+    ├── agy-recent.json       # 最近 200 条请求与轮换活动环形缓冲区 (0600 权限)
+    └── agy-ui-prefs.json     # 前端 UI 个性化配置 (自动刷新与智能模式)
+```
 
-**第一处不同：缓存的启用门槛。** DeepSeek 的缓存默认开启没有门槛，
-它的第一个请求就能命中之前缓存的系统提示。而 agy 的 gemini 系模型要求
-请求消息前缀达到约 16k token 才开始缓存，而 DSH 的默认裸系统提示
-（System Prompt）只有约 13k token，低于这个门槛——所以每个新对话的
-前一两个请求必然是 0%，要累积消息大小 > 16k 才开始命中。
+- **绝对隐私保护**：统计文件和请求日志中只记录脱敏后的账号邮箱与模型名称，**绝不记录明文 Access Token、Refresh Token 或 Project ID**。
 
-**第二处不同：缓存更新的速度。** DeepSeek 在每个请求结束时立即更新缓存，
-每轮对话中只有最新那条消息没命中，命中率接近 100%。agy 的缓存更新慢半拍，
-本轮新增的内容，不会在下一轮被命中——要等大约两轮后才进入缓存生效，中间这一
-两轮对相同内容的请求全部算"未命中"。结果每轮都有约 1.5 到2 倍新增量的内容
-无法命中。长对话的命中率会随上下文增长持续上升，理论上限由模型上下文窗口决定。
+---
 
-**实用建议**
+## ⚙️ 风险管控与环境变量
 
-- 别期待 agy 能达到 99%：差距来自上游机制，没有优化空间。
-- 如果你真的有什么奇怪的数字强迫症，往 System Prompt 里塞一些自定义内容（MCP / 工具定义 / 角色扮演 ...）。
+| 环境变量 | 默认值 | 功能说明 |
+|---|---|---|
+| `DSH_AGY_DISABLE=1` | `0` | **一键紧急熔断开关**：阻止插件加载任何组件（Adapter、设置面板、配额徽章），CLI 拒绝执行。 |
+| `DSH_AGY_FINGERPRINT_MODE` | `dynamic` | `dynamic`：逐请求动态随机化请求头；<br>`stable`：单账号绑定固定设备指纹标识。 |
+| `DSH_AGY_MULTIMODAL_MAX_INLINE_MB` | `20` | 非图片多模态文件的单文件内联大小上限（MB，取值范围 1–100）。 |
+| `DSH_AGY_HEALTH_INTERVAL_MS` | `0` (关闭) | DSH 内部后台全自动健康巡检间隔时间（自动 refresh + userinfo）。 |
+| `DSH_AGY_IDLE_TIMEOUT_MS` | `180000` | SSE 数据流断流超时时间（默认 3 分钟）。防止由于连接挂起阻塞对话进程。 |
+| `AGY_CLIENT_ID`<br>`AGY_CLIENT_SECRET` | *(内置)* | 自备 Google OAuth 客户端密钥逃生通道，用于覆盖内置的公共客户端。 |
 
-### 存储与密钥
+---
 
-所有 agy 数据文件统一放在一个文件夹 `~/.dsh/agy/`（`$DSH_HOME` 可整体迁移）。
-从 ≤0.4 升级后，首次启动时会把 `~/.dsh/` 下的旧版文件一次性原子改名挪进去；此后
-如果旧路径又出现同名文件，说明还有旧版本进程在运行——会有一次警告说明这一点。
+## 🗑️ 卸载指南
 
-- 账号：`~/.dsh/agy/agy-accounts.json`，AES-256-GCM 加密；主密钥在
-  `~/.dsh/.credentials.yaml`（`AGY_MASTER_KEY`，0600）。`$DSH_HOME` 可整体迁移。
-- 模型可见性：`~/.dsh/agy/agy-models.json`（0600）——被隐藏模型的名单，只记录你关闭掉的模型，重新打开即删除对应条目。
-- 多模态内联上限：`~/.dsh/agy/agy-multimodal.json`（0600）——单文件内联上限（MB）。
-  字段缺失即表示使用内置的 20MB 默认值。
-- 用量统计：`~/.dsh/agy/agy-stats.json`（0600）——累计计数器加一个滚动 30 天窗口。计数在文件锁下合并，
-  因此多个进程（桌面端、web profile 服务、CLI）可并发记录而不会互相覆盖。
-- 最近请求：`~/.dsh/agy/agy-recent.json`（0600）——最近 200 条请求与轮换记录，落盘后
-  面板在重启后仍可见，也能看到其他进程的历史（外部进程的新记录 ≤30s 到达）。
-- 指纹池（版本串/SDK 客户端）可通过 `~/.dsh/agy/agy-fingerprint-data.json` 覆盖——
-  无需发版即可更新。
-- 以上文件均不存 token、代理或 project id——只存账号 email；token 加密存在账号文件里，
-  主密钥存在凭据文档里。
+```sh
+# 1. 从 DSH 移除插件
+dsh plugin --profile web remove dsh-plugin-agy
 
+# 2. 卸载全局 CLI（如已安装）
+npm uninstall -g dsh-plugin-agy
+
+# 3.（可选）删除本地存储的全部加密账号与配置数据
+rm -rf ~/.dsh/agy
+
+# 4.（可选）撤销 Google 侧授权
+# 前往：Google 账号安全中心 → 第三方访问权限 → 撤销 "Antigravity"
+```
+
+---
 
 ## ⚠️ 风险声明
 
-本插件使用 Antigravity 桌面产品内置的 Google consumer OAuth 客户端，并在该产品
-之外使用 Antigravity Cloud Code API。这可能违反 Antigravity 服务条款。
-**风险自负**——账号可能被限流、降级或封禁。多账号轮换、设备指纹与
-签名绕过 sentinel 默认开启，设计上用于规避上游限制；请自行评估使用方式与账号后果。
+本插件基于 Antigravity 客户端内置的公开 Google consumer OAuth 客户端，并在该应用生态外调用相关接口。这可能违反上游服务条款。**使用风险完全由个人承担**——账号可能面临限流、降级或限制策略。多账号轮换及指纹伪装仅供开发与研究测试，请合理规范使用。
 
+---
 
-## 参考项目与借鉴内容
+## 🤝 参考项目与致谢
 
-本项目参考了以下 MIT 许可项目的逻辑与数据：
+本项目由衷感谢以下开源生态项目的灵感与代码借鉴：
 
-| 来源 | 内容 |
-|---|---|
-| [opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth)（已归档） | OAuth 流程形态、账号存储 schema 与版本化迁移、429/退避概念、指纹设计 |
-| [antigravity-claude-proxy PR #170](https://github.com/badrisnarayanan/antigravity-claude-proxy/pull/170) | 设备指纹生成（经 opencode-antigravity-auth 移植） |
-| [OmniRoute](https://github.com/diegosouzapw/OmniRoute) | Wire 格式（envelope/头/SSE）、端点顺序、`agy` token 文件解析、粘贴凭据 blob 编解码、thoughtSignature 重放、429 分类引擎 |
-| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | 插件壳、`LlmAdapter` seam、DSH 约定 |
+| 来源项目 | 协议 | 借鉴与贡献内容 |
+|---|:---:|---|
+| [chaos-03x/dsh-agy](https://github.com/chaos-03x/dsh-agy) | **MIT** | **核心上游起源**：多账号存储设计、DSH 原生设置集成、配额双窗口轮换算法及完整 CLI 工具链。 |
+| [opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth) | MIT | OAuth 流程规范、账号存储 Schema、429 指数退避概念及设备指纹模型。 |
+| [antigravity-claude-proxy](https://github.com/badrisnarayanan/antigravity-claude-proxy) | MIT | 设备指纹生成算法（经 opencode 移植）。 |
+| [OmniRoute](https://github.com/diegosouzapw/OmniRoute) | MIT | Wire 通信协议、SSE 解析、凭据 blob 编解码、thoughtSignature 重放及 429 智能分类引擎。 |
+| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | MIT | 插件生命周期规范、`LlmAdapter` 适配机制与 Web 扩展能力。 |
 
-## 开发
+---
 
-```sh
-pnpm install
-pnpm test                      # vitest，fixture 驱动，无网络
-pnpm run record:fixtures       # 重新录制真实 API fixture（需真实账号）
-pnpm run e2e                   # 真实账号端到端（需 AGY_REFRESH_TOKEN）
-pnpm run debug:request         # 端点/头二分探测
-pnpm run verify:tools          # 真实两轮工具签名验证
-npm pack --dry-run             # 验证发布产物
-```
+## 📄 开源协议
+
+本项目基于 [MIT 协议](LICENSE) 开源。

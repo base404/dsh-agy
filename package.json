@@ -1,5 +1,5 @@
 {
-  "name": "dsh-agy",
+  "name": "dsh-plugin-agy",
   "version": "0.4.6",
   "packageManager": "pnpm@11.28.3",
   "description": "Google Antigravity (agy) OAuth auth + model access plugin for DeepSeek Harness: multi-account pool, 429 rotation, device fingerprinting, CLI and web login.",
@@ -8,9 +8,10 @@
   "author": "chaos-03x <73626814+chaos-03x@users.noreply.github.com>",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/chaos-03x/dsh-agy.git"
+    "url": "git+https://github.com/base404/dsh-agy.git"
   },
   "bin": {
+    "dsh-plugin-agy": "bin/dsh-agy.js",
     "dsh-agy": "bin/dsh-agy.js"
   },
   "main": "./lib/index.mjs",

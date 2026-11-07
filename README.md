@@ -1,335 +1,363 @@
-# dsh-agy
+# dsh-plugin-agy
 
-[![CI](https://github.com/chaos-03x/dsh-agy/actions/workflows/ci.yml/badge.svg)](https://github.com/chaos-03x/dsh-agy/actions/workflows/ci.yml)
-[![npm version](https://img.shields.io/npm/v/dsh-agy)](https://www.npmjs.com/package/dsh-agy)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
+[![Node.js](https://img.shields.io/badge/Node.js-%3E%3D20.18.1-brightgreen.svg)](https://nodejs.org/)
+[![DSH Plugin](https://img.shields.io/badge/DSH-Plugin-orange.svg)](https://github.com/deepseek-ai/deepseek-harness)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.8-blue.svg)](https://www.typescriptlang.org/)
 
-Google Antigravity (agy) access for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness):
-OAuth authentication, a multi-account pool with automatic 429 rotation, device
-fingerprinting, and both CLI and web management.
+**dsh-plugin-agy** is a feature-rich, high-performance Google Antigravity (agy) access plugin and standalone CLI for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness). It delivers seamless OAuth 2.0 authentication, an encrypted multi-account pool with quota-aware 429 rotation, dual rolling quota tracking (5-hour and weekly), dynamic device fingerprinting, and first-class Web UI and terminal management.
 
-> 中文文档：[docs/README_zh.md](docs/README_zh.md)
+> 🌐 **Language / 语言导航**  
+> [English](README.md) | [简体中文文档](docs/README_zh.md)
 
-## Features
+---
 
-- **OAuth login**: one-click sign-in via browser OAuth callback, with headless
-  paste-URL mode and a remote paste-credential blob channel.
-- **Two management surfaces**: web and CLI, either one works, core features are
-  the same.
-- **Multi-account pool**: encrypted account store, usage-aware account
-  selection (family-scoped quotas, OMP-aligned ranking), automatic rotation on
-  rate limits, per-account cooldown to the real reset time, per-account device
-  fingerprints.
-- **Inline Settings UI**: an Antigravity section inside DSH Settings with five
-  tabs — accounts (login, activation, grouped 5-hour/weekly quota windows, test
-  calls, fingerprint and proxy management), models (per-model visibility), config
-  (thinking budgets, multimodal inline limit), usage (cumulative token and request
-  statistics), and credentials (import/export).
-  No separate page: the surface only exists where DSH Settings does.
-- **Quota badge in the session header**: the tightest of the active account's
-  tracked windows (5-hour vs weekly) as a single figure, with the per-window
-  breakdown and reset walls on hover. It reads the same grouped quota windows the
-  Settings section shows, so the header and the panel cannot disagree.
-- **Model visibility toggles**: hide individual models from the DSH model
-  selector. Blacklist semantics — only models you switch off are hidden, so
-  models the server adds later stay visible.
-- **Usage statistics**: input / output / cache-read / cache-write tokens,
-  request counts, failures, rate limits, rotations, latency and
-  time-to-first-token, aggregated by account and by model. Includes calls that
-  never pass through DSH (CLI, verification, test calls), which no
-  session-based statistic can see.
-- **CLI**: `dsh-agy login|status|import|verify|logout` works standalone, with or
-  without a harness.
+> 💡 **致谢与项目渊源 (Acknowledgement & Lineage)**  
+> 本项目（`dsh-plugin-agy`）遵循 **MIT 开源协议**，基于并深度优化自 [chaos-03x/dsh-agy](https://github.com/chaos-03x/dsh-agy)。衷心感谢原作者 [@chaos-03x](https://github.com/chaos-03x) 及相关贡献者的卓越开拓与实现！本项目在此基础上持续维护并提供针对 DeepSeek Harness 最新特性的深度体验优化。  
+> *This project is forked and heavily optimized under the MIT License from [chaos-03x/dsh-agy](https://github.com/chaos-03x/dsh-agy). Sincere gratitude to the original author [@chaos-03x](https://github.com/chaos-03x) and contributors for their outstanding foundation.*
 
-## Screenshots
+---
 
-The Antigravity section inside DSH Settings. Account emails and project names are
-redacted.
+## 📑 Table of Contents
 
-| Accounts | Models |
+- [Features](#-features)
+- [UI Screenshots](#-ui-screenshots)
+- [Quickstart](#-quickstart)
+  - [Path A: DSH Web GUI Users (Recommended)](#path-a-dsh-web-gui-users-recommended)
+  - [Path B: Headless Terminal / Linux VPS (CLI)](#path-b-headless-terminal--linux-vps-cli)
+  - [Path C: Local Source Development & Link](#path-c-local-source-development--link)
+- [CLI Reference](#-cli-reference)
+  - [Per-Account Proxy Management](#per-account-proxy-management)
+- [Core Architecture & Mechanisms](#-core-architecture--mechanisms)
+  - [1. Dual-Window Quota Tracking & Rotation](#1-dual-window-quota-tracking--rotation)
+  - [2. Intelligent 429 Rate-Limit Classification](#2-intelligent-429-rate-limit-classification)
+  - [3. Thinking Budget (Reasoning Effort)](#3-thinking-budget-reasoning-effort)
+  - [4. Upstream Cache Mechanics (Antigravity vs DeepSeek)](#4-upstream-cache-mechanics-antigravity-vs-deepseek)
+  - [5. Secure Storage & Secrets Architecture](#5-secure-storage--secrets-architecture)
+- [Risk Controls & Environment Variables](#-risk-controls--environment-variables)
+- [Uninstallation](#-uninstallation)
+- [Disclaimer](#-disclaimer)
+- [Credits & References](#-credits--references)
+- [License](#-license)
+
+---
+
+## ✨ Features
+
+- **🔑 Frictionless OAuth 2.0 Access**:
+  - One-click authorization in desktop browsers via automated local loopback callback.
+  - Headless paste-URL mode for remote/VPS environments.
+  - Paste-credential blob channel (`--blob`) to safely transport credentials between machines without re-authorizing.
+
+- **🔄 Intelligent Multi-Account Pool & Auto-Rotation**:
+  - Encrypted account store with usage-aware, OMP-aligned candidate selection across model families (`gemini-*`, `claude-*`, `gpt-*`).
+  - Independent **Dual-Window Tracking**: monitors both rolling 5-hour and 7-day weekly refill windows to prevent exhausting weekly allotments.
+  - Smart 429 / `RESOURCE_EXHAUSTED` state classification: differentiates soft rate limits, reset-bound cooldowns, and genuine quota exhaustion.
+  - Automatic fallback, cool-down, and failover across accounts matching upstream server reset timestamps.
+
+- **🎨 DeepSeek Harness Native Web Settings Section**:
+  - Cleanly integrated under **Settings → Antigravity** (no external dashboard or separate port needed).
+  - **Accounts Tab**: Login, activate, inspect per-account 5h/weekly quotas, conduct end-to-end test calls, manage fingerprints, and set dedicated proxies.
+  - **Models Tab**: Model visibility switches with blacklist semantics — newly added upstream models appear automatically.
+  - **Config Tab**: Fine-tune thinking token budgets (Low/Medium/High/Custom) and customize multimodal inline file limits (1–100 MB).
+  - **Usage Tab**: Cumulative tokens (input, output, cache-read, cache-write), total requests, failure rates, rotations, and latency breakdown by account and model.
+  - **Credentials Tab**: Convenient import and export of credential blobs and JSON configurations.
+
+- **🏷️ Conversation Header Quota Badge**:
+  - Live visual indicator right in the DSH chat session header.
+  - Displays the active account's tightest quota window at a glance.
+  - Hover tooltip reveals detailed breakdown and real-time reset wall countdowns.
+
+- **🛡️ Enterprise-Grade Security & Isolation**:
+  - Credentials encrypted at rest with AES-256-GCM; master key guarded under `0600` POSIX permissions.
+  - Loopback trust fence preventing unauthorized external access to management endpoints.
+  - Per-account SOCKS5 / HTTP proxy routing with TCP fast-fail diagnostics and loopback direct bypass.
+  - Dynamic request header randomization and stable device fingerprint posture options.
+
+- **💻 Standalone CLI (`dsh-plugin-agy` / `dsh-agy`)**:
+  - Complete command suite (`login`, `status`, `verify`, `health`, `import`, `export`, `proxy`, `logout`) functioning independently of DSH runtime.
+
+---
+
+## 📸 UI Screenshots & Visual Tour
+
+Native Antigravity management and real-time quota status seamlessly integrated into DeepSeek Harness:
+
+### 1. Conversation Header Quota Badge & Status Popover
+Real-time quota monitoring directly in your chat header with multi-family breakdown (Gemini, Claude/GPT, Gemini 4 Argon) and live countdown to the server reset wall:
+
+<p align="center">
+  <img src="assets/quota_badge_popover.png" alt="Conversation Header Quota Badge & Status Popover" width="460" />
+</p>
+
+### 2. Multi-Account Pool & Diagnostics
+Account switching, verification, per-account proxy, device fingerprint status, latency, and throughput metrics:
+
+<p align="center">
+  <img src="assets/settings_accounts.png" alt="Multi-Account Pool & Diagnostics" width="680" />
+</p>
+
+### 3. Preferences, Smart Idle Mode & Badge Customization
+Granular control over auto-rotation, precision reset countdowns, refresh cadences, smart idle pause, and header badge display modes:
+
+<p align="center">
+  <img src="assets/settings_preferences.png" alt="Preferences & Badge Configuration" width="680" />
+</p>
+
+### 4. Model Blacklist & Cumulative Usage Analytics
+
+| Model Visibility Toggles | Cumulative Usage Ledger |
 |:---:|:---:|
-| ![accounts](https://raw.githubusercontent.com/chaos-03x/dsh-agy/main/assets/en_accounts.png) | ![models](https://raw.githubusercontent.com/chaos-03x/dsh-agy/main/assets/en_models.png) |
-| **Limits** — 5-hour and weekly windows | **Usage** — cumulative, per-model and per-account |
-| ![limits](https://raw.githubusercontent.com/chaos-03x/dsh-agy/main/assets/en_limits.png) | ![usage](https://raw.githubusercontent.com/chaos-03x/dsh-agy/main/assets/en_usage.png) |
+| ![Models](assets/zh_models.png) | ![Usage](assets/zh_usage.png) |
 
-## Quickstart
+---
 
-### Path A: DSH Web GUI Users (Recommended — 100% Web UI, zero CLI commands)
+## 🚀 Quickstart
 
-For users using DeepSeek Harness browser workspace / Web GUI:
+### Path A: DSH Web GUI Users (Recommended)
+
+For users running the DeepSeek Harness desktop or browser interface:
 
 ```sh
-# 1. Install plugin into DSH web profile (via dsh CLI, or pnpx/npx if dsh is not in PATH)
-dsh plugin --profile web add dsh-agy
-# or: npx @deepseek-ai/dsh plugin --profile web add dsh-agy
+# 1. Install dsh-plugin-agy into your DSH web profile
+dsh plugin --profile web add dsh-plugin-agy
+# Or via npx:
+# npx @deepseek-ai/dsh plugin --profile web add dsh-plugin-agy
 
 # 2. Launch DSH Web
 dsh web
 
-# 3. Open Settings → Antigravity, then click "登录" (Login) in that section
-# Complete OAuth authorization, and start using the agy provider
+# 3. Open Settings → Antigravity, click "登录" (Login)
+# Complete Google OAuth authorization in your browser and start chatting immediately!
 ```
 
-The section lives in **Settings → Antigravity** (top-level, alongside General
-and Models). There is no separate dashboard page: the old `/agy` URL is gone.
+> **Where is the management UI?**  
+> Go to **Settings → Antigravity** in the DSH top navigation. Everything is configured directly inside the native interface.
 
-### Path B: Headless / Terminal Only (Standalone CLI)
+---
 
-For Linux VPS, SSH remote servers, or headless CI environments:
+### Path B: Headless Terminal / Linux VPS (CLI)
+
+Ideal for headless servers, SSH terminal environments, or automated workflows:
 
 ```sh
-# Run directly without global install (npx / pnpx)
-npx dsh-agy login
-npx dsh-agy status
+# Run on-demand without global installation (npx / pnpx)
+npx dsh-plugin-agy login
+npx dsh-plugin-agy status
 
-# Or install globally
-npm install -g dsh-agy
-dsh-agy login          # interactive OAuth (browser, --headless paste, or --blob)
-dsh-agy status         # list accounts + quota summary
-dsh-agy verify         # refresh + health check
-dsh-agy health         # batch health check (optionally on an interval)
-dsh-agy import <file>  # import agy auth.json or credential blob (--blob)
-dsh-agy logout         # remove account
+# Or install globally for everyday convenience
+npm install -g dsh-plugin-agy
+
+# Interactive OAuth login (browser, --headless URL paste, or --blob output)
+dsh-plugin-agy login
+
+# Check active pool accounts and quota status
+dsh-plugin-agy status
+
+# Verify token validity and run diagnostic health checks
+dsh-plugin-agy verify
+
+# Run batch background health verification
+dsh-plugin-agy health
+
+# Import credentials (auth.json or paste-blob)
+dsh-plugin-agy import <file>
+
+# Remove an account
+dsh-plugin-agy logout
 ```
 
-## CLI reference
+*(Note: The legacy command alias `dsh-agy` is fully retained and operates identically).*
 
-| Command | Options | Description |
-|---|---|---|
-| `dsh-agy login` | `--headless` — print the auth URL and wait for a pasted redirect URL<br>`--blob` — print a paste-credential blob instead of storing the account<br>`--port <n>` — loopback callback port (default `51121`)<br>`--project <id>` — bind the login to a specific project<br>`--timeout <ms>` — callback timeout (default `300000`) | Interactive Google OAuth |
-| `dsh-agy status` | — | List accounts + per-model quota summary |
-| `dsh-agy import <files...>` | `--blob` — the pasted value is a credential blob<br>`--email <email>` — set the account email (skips userinfo verification)<br>`--overwrite` — replace an existing account with the same email | Import agy auth.json files or credential blobs (multiple files / multi-line paste = batch import) |
-| `dsh-agy export` | `--index <n>` — export one account by index (default: all)<br>`--out <dir>` — write one `dsh-agy-<index>.blob` per account (default: print to stdout, one blob per line) | Export account credentials as paste blobs |
-| `dsh-agy verify` | `--index <n>` — verify one account by index (default: all) | Refresh + health check |
-| `dsh-agy health` | `--index <n...>` — check only these accounts (default: all enabled)<br>`--interval <ms>` — repeat on an interval instead of once | Batch health check (refresh + userinfo), re-enables accounts whose credentials are live again |
-| `dsh-agy logout` | `--index <n>` — account index (default: active)<br>`--email <email>` — account email | Remove an account |
+---
 
-### Per-account proxy
+### Path C: Local Source Development & Link
 
-Each account can have its own proxy; credentials are encrypted at rest and displayed masked as `protocol//host:port`.
+For contributors modifying code or testing development builds:
 
 ```sh
-dsh-agy login --proxy socks5://user:pass@host:1080
-dsh-agy import --proxy <url> file.json
-dsh-agy proxy set --index 0 --proxy <url>   # set / update
-dsh-agy proxy clear --index 0               # clear (fall back to env)
-dsh-agy proxy test --index 0                # TCP 2s fast-fail probe
-dsh-agy proxy list                          # masked list
-dsh-agy status                              # shows proxy column (masked host:port)
-```
+# 1. Clone repository
+git clone https://github.com/base404/dsh-agy.git
+cd dsh-agy
 
-Fallback: with no per-account proxy, requests use `EnvHttpProxyAgent` (`HTTP_PROXY`/`HTTPS_PROXY` with `NO_PROXY` honored). Per-account proxies ignore `NO_PROXY`, are fail-closed (unreachable proxy skips the account without cooldown and clears affinity), and loopback targets (`localhost`/`127.0.0.1`/`::1`) are always forced direct.
+# 2. Install dependencies & build
+pnpm install
+pnpm run build
 
-Settings → Antigravity → account detail shows a Proxy row `[input] [Save][Clear][Test]` with the masked `host:port`; writes and probes go over the management RPC (`account.proxy` / `account.proxyTest`). Save requires a non-empty value — clearing an existing proxy is the explicit `Clear` action, never an accidental empty Save. `Test` probes whatever is in the box, so an UNSAVED proxy can be checked before it is written; it reports reachable/unreachable in the notice line, and is disabled (with the reason on its tooltip) when there is nothing to probe.
-
-The toolbar's `Refresh` reloads the account list and usage ledger, and additionally re-measures the 5h/weekly quota windows past their 10-minute TTL cache — that forced probe reports how many accounts it refreshed, so a click is never silent. Automatic reloads respect the TTL and spend no upstream call.
-
-### Path C: Local Development & Link
-
-```sh
-git clone https://github.com/chaos-03x/dsh-agy.git
-cd dsh-agy && pnpm install && pnpm run build
+# 3. Link plugin into DSH
 dsh plugin --profile web link .
+
+# 4. Run test suite
+pnpm test
 ```
 
-Requires Node >= 22.
+> Requires Node.js >= 20.18.1 (recommended Node 22+).
 
-## Uninstall
+---
+
+## 🛠️ CLI Reference
+
+| Command | Key Options | Description |
+|---|---|---|
+| `dsh-plugin-agy login` | `--headless`<br>`--blob`<br>`--port <n>` (default: `51121`)<br>`--project <id>`<br>`--timeout <ms>` (default: `300000`) | Interactive Google OAuth sign-in. Prints browser callback or waits for pasted redirect URL. |
+| `dsh-plugin-agy status` | — | Displays all configured accounts, active index, proxies, and per-model quota status. |
+| `dsh-plugin-agy import <files...>` | `--blob`<br>`--email <email>`<br>`--overwrite` | Imports Google Cloud Code `auth.json` files or paste blobs (supports batch import). |
+| `dsh-plugin-agy export` | `--index <n>` (default: all)<br>`--out <dir>` | Exports accounts into portable encrypted/base64 credential blobs. |
+| `dsh-plugin-agy verify` | `--index <n>` (default: all) | Refreshes OAuth access token and verifies Cloud Code backend userinfo. |
+| `dsh-plugin-agy health` | `--index <n...>`<br>`--interval <ms>` | Batch health probe. Re-enables accounts whose credentials have recovered. |
+| `dsh-plugin-agy logout` | `--index <n>` (default: active)<br>`--email <email>` | Removes an account from local encrypted storage. |
+| `dsh-plugin-agy proxy ...` | `set`, `clear`, `test`, `list` | Inspects and configures per-account proxy settings. |
+
+### Per-Account Proxy Management
+
+Each account in your pool can be routed through its own dedicated proxy. Credentials are encrypted at rest and displayed masked (`protocol://host:port`).
 
 ```sh
-# 1. Remove the DSH plugin from a profile
-dsh plugin --profile web remove dsh-agy
+# Configure proxy during login or import
+dsh-plugin-agy login --proxy socks5://user:pass@127.0.0.1:1080
+dsh-plugin-agy import --proxy http://127.0.0.1:7890 auth.json
 
-# 2. Uninstall the CLI
-npm uninstall -g dsh-agy
-
-# 3. Optional: delete local account data (the whole agy data folder)
-dsh-agy logout              # remove accounts first (or skip)
-rm -rf ~/.dsh/agy           # accounts, usage stats, model visibility, thinking budgets, recent ring
-# remove only the AGY_MASTER_KEY line from ~/.dsh/.credentials.yaml — keep other keys!
-# (an upgrade from ≤0.4 may leave legacy files in ~/.dsh itself: rm -f ~/.dsh/agy-*.json)
-
-# 4. Optional: revoke the Google-side authorization
-#    Google account security → Third-party access → revoke "Antigravity"
+# Manage proxy on an existing account
+dsh-plugin-agy proxy set --index 0 --proxy socks5://127.0.0.1:1080
+dsh-plugin-agy proxy test --index 0               # Fast 2s TCP probe
+dsh-plugin-agy proxy clear --index 0              # Clear proxy (falls back to env)
+dsh-plugin-agy proxy list                         # List accounts with masked proxies
 ```
 
-Deleting local files does **not** revoke Google-side tokens; the refresh token stays
-valid until it expires or you revoke it in your Google account security settings.
+- **Routing Rules**:
+  - Accounts with a configured proxy use that proxy strictly (ignoring `NO_PROXY`).
+  - Accounts without an explicit proxy automatically inherit system environment variables (`HTTP_PROXY`, `HTTPS_PROXY`, respecting `NO_PROXY`).
+  - Loopback destinations (`127.0.0.1`, `localhost`, `::1`) are always forced direct.
+  - Proxy failures are fail-closed: an unreachable proxy skips the account immediately without incurring unnecessary cooldown locks.
 
-## Other things you may care about
+---
 
-### Thinking budget (reasoning effort)
+## 🧠 Core Architecture & Mechanisms
 
-A thinking budget is a hidden parameter in the API that controls how hard the
-model thinks. Upstream gives a few of its values names, and those names are what
-you see as reasoning effort (`high` / `medium` / `low`) in the model picker. A
-budget replaces the `high` / `medium` / `low` value that would otherwise be sent,
-rather than stacking with it.
+### 1. Dual-Window Quota Tracking & Rotation
 
-With that in mind, here is what a custom budget can do:
+Upstream Antigravity enforces quota resets across two disparate timeframes that refill on different schedules. Tracking only one window leads to unexpected outages:
 
-- **Make a low tier think more** — put a larger value on the `Low` row.
-- **Make a high tier think less** (faster, cheaper) — put a smaller value on the
-  `High` row.
-- **Maximum thinking** — just select `High`; no value needed.
-- **Back to that tier's default** — clear the row.
-
-The model adapts how long it thinks to the difficulty of the question, within the
-budget. This table shows what Gemini 3.8 Flash actually spent (in tokens) under
-different budgets, on questions of different difficulty:
-
-| Setting | Easy | Medium | Hard |
+| Quota Window | Refill Schedule | Exhaustion Threshold | Lockout Duration |
 |---|---|---|---|
-| Default | ~135 | ~1,100 | ~48,700 |
-| Low | ~50 | 0 | ~9,000 |
-| Medium | ~150 | ~870 | ~60,400 |
-| High | ~165 | ~1,855 | ~63,400 |
-| Entered 65535 | ~185 | ~2,130 | ~62,900 |
+| **Rolling 5-Hour** | Every 5 hours | Remaining < 15% | Until 5-hour reset |
+| **Weekly Window** | Every 7 days | Remaining ≤ 1% | Until **weekly** reset |
 
-Entering the maximum (65535) is identical to selecting High on the hard question,
-but raises thinking on the easy and medium ones by about 10–15%. The value alone
-decides the effect — the same number entered on any row sends the same request.
+- **Why Dual Windows Matter**: An account may possess 95% of its 5-hour allowance while its weekly quota is completely drained. Four 5-hour refills cannot restore a depleted weekly quota. The rotation engine evaluates both gates independently.
+- **"Use It or Lose It" Policy**: Accounts whose remaining quota is about to reset are prioritized, maximizing overall pool efficiency.
 
-Note: the hard question is a combinatorial derivation (derive a tiling recurrence
-and compute term 40), the medium one a number-theory proof (prove n⁴+4 is always
-composite), and the easy one a two-digit multiplication.
+### 2. Intelligent 429 Rate-Limit Classification
 
-### Rotation mechanics
+HTTP 429 errors are not treated as generic failures. `dsh-plugin-agy` runs a state machine to apply targeted cooldowns:
 
-Usage-aware selection: when several accounts are available, requests rank them
-by the requested model's backend counter family (`gemini-*` → Google,
-`claude-*` → Anthropic, `gpt-*` → OpenAI): accounts whose quota is about to
-reset with headroom left are used first ("use it or lose it"), near-exhausted
-families are avoided, and exhausted families block the account until the real
-reset time.
+```mermaid
+flowchart TD
+    Err[Upstream 429 / Rate Limit] --> Classify{Response Classifier}
+    Classify -->|Retry-After < 3s| Soft[soft_rate_limit: Immediate retry, same account]
+    Classify -->|Server Reset Time Reported| Rate[rate_limited: Cooldown to reset time, switch account]
+    Classify -->|RESOURCE_EXHAUSTED / Quota Reached| Quota[quota_exhausted: Park account up to 24h]
+    Classify -->|Transient / Network Glitch| Exp[unknown: Exponential backoff]
+```
 
-Each family is measured on **both** of its windows, because they refill on
-different clocks:
+- **401/403 Handling**: Standard 401s mark an account for re-authentication. 403s containing quota-exhaustion messages are safely redirected to cooldown rather than permanently invalidating healthy accounts.
 
-| Window | Refills | Exhausted when | Blocks until |
-|---|---|---|---|
-| Rolling 5-hour | every 5 hours | below 15% left | the 5-hour reset |
-| Weekly | every 7 days | 1% or less left | the **weekly** reset |
+### 3. Thinking Budget (Reasoning Effort)
 
-The two gates are independent. A family can sit at 90% of its 5-hour budget
-while its week is spent — four 5-hour refills do not return a weekly budget —
-so a week-exhausted account is rotated away instead of being selected and
-failing. The thresholds are deliberately different (15% of five hours is ~45
-minutes of runway; 1% of a week is ~1.7 hours): judging the 5-hour window too
-late costs a wait of at most five hours, while judging the week too late parks
-the account for days.
+Google's reasoning models support a hidden parameter controlling thinking token depth. Custom budgets let you adjust reasoning effort beyond basic `low`, `medium`, and `high` settings:
 
-The weekly reading comes only from `retrieveUserQuotaSummary` — the per-model
-`fetchAvailableModels` probe has no window field at all — and a probe that
-reports neither window cannot erase a known-drained one.
+- **Elevate Low Tier**: Increase tokens on `Low` for deeper analysis while maintaining fast responses.
+- **Throttle High Tier**: Cap `High` to save quota and speed up answers.
+- **Maximum Reasoning**: Set to `65535` for uncompromising depth on complex problems.
 
-429 (Too Many Requests) responses:
+*Empirical tokens consumed by Gemini 3.8 Flash across difficulty tiers:*
 
-| Category | Behavior |
-|---|---|
-| `soft_rate_limit` (Retry-After < 3s) | immediate retry on the same account, no cooldown |
-| `rate_limited` | cooldown until the server-reported reset time (capped 30min, 5min fallback) + switch to the next account (same account when single) |
-| `quota_exhausted` ("quota reached", "individual quota", RESOURCE_EXHAUSTED…) | cooldown until the server-reported reset time (capped 24h) — no further calls to that account until then |
-| `unknown` | exponential backoff |
+| Setting | Easy Problem (Arithmetic) | Medium Problem (Number Theory) | Hard Problem (Combinatorics) |
+|---|:---:|:---:|:---:|
+| **Default** | ~135 | ~1,100 | ~48,700 |
+| **Low** | ~50 | 0 | ~9,000 |
+| **Medium** | ~150 | ~870 | ~60,400 |
+| **High** | ~165 | ~1,855 | ~63,400 |
+| **Custom 65535** | ~185 | ~2,130 | ~62,900 |
 
-401/403 → account revoked (marked for re-authentication). Success resets the failure
-counter.
+### 4. Upstream Cache Mechanics (Antigravity vs DeepSeek)
 
-### Risk controls (environment switches)
+Why does Antigravity's cache hit rate not hit 99% right away like DeepSeek V4?
 
-| Env | Effect |
-|---|---|
-| `DSH_AGY_DISABLE=1` | Kill switch: the plugin registers nothing (provider + Settings section + header quota badge + OAuth callback) and the CLI refuses to run. |
-| `DSH_AGY_FINGERPRINT_MODE=stable` | One fixed client identity per account — no per-request header randomization, no fingerprint regeneration (OMP-style fixed-client posture). Default `dynamic` keeps per-request randomization. |
-| `DSH_AGY_HEALTH_INTERVAL_MS=<ms>` | Background batch health probe inside the harness (refresh + userinfo on the configured interval); off by default. |
-| `DSH_AGY_IDLE_TIMEOUT_MS=<ms>` | Silence budget for one SSE body read (default `180000`, 3 min; `0` disables). A body that stops producing bytes is abandoned instead of hanging the turn; any byte resets it, so a long reasoning pause is untouched. `AGY_IDLE_TIMEOUT_MS` is accepted as an alias. |
-| `DSH_AGY_MULTIMODAL_MAX_INLINE_MB=<mb>` | Per-file cap for inlining non-image multimodal files, in MB (1–100). Overrides the Config tab setting; an unparseable or out-of-range value is ignored, leaving the stored value or the 20MB default in force. |
-| `AGY_CLIENT_ID` / `AGY_CLIENT_SECRET` | BYO OAuth app escape hatch: override the embedded public Antigravity client credentials. |
+1. **Prefix Threshold**: DeepSeek caches from the very first token. In contrast, Antigravity Gemini models require a prompt prefix of ~16k tokens before caching activates. The initial 1–2 turns of a conversation will report 0% cache hit until context exceeds ~16k tokens.
+2. **Lagged Cache Writing**: DeepSeek writes updates immediately at the end of each turn. Antigravity updates lag by approximately two turns. Content submitted in turn N only hits the cache in turn N+2. Long conversations will see hit rates climb steadily as context expands.
 
-### About cache hits: why not 99% like DeepSeek V4?
+### 5. Secure Storage & Secrets Architecture
 
-Bottom line: the cache hit strategy is decided by the model provider's cache
-mechanics (for us, Antigravity's); agy's mechanics differ from DeepSeek's in
-two ways, so its hit rate is naturally a notch below DeepSeek's.
+All data files are centralized in `~/.dsh/agy/` (relocatable via `$DSH_HOME`):
 
-**First, the entry threshold.** DeepSeek's caching is on by default with no
-threshold — its very first request already hits a previously cached system
-prompt. agy's Gemini-tiered models only start caching once the request prefix
-reaches roughly 16k tokens, while DSH's default bare system prompt is only
-about 13k — below the line. So every new conversation's first 1-2 requests
-are 0%, until the accumulated messages pass 16k.
+```text
+~/.dsh/
+├── .credentials.yaml        # Holds AGY_MASTER_KEY (0600, owner-only)
+└── agy/
+    ├── agy-accounts.json     # Encrypted accounts pool (AES-256-GCM, 0600)
+    ├── agy-stats.json        # Cumulative token & request usage ledger (0600)
+    ├── agy-models.json       # Hidden models blacklist (0600)
+    ├── agy-thinking.json     # Stored thinking budgets (0600)
+    ├── agy-multimodal.json   # Multimodal inline cap in MB (0600)
+    ├── agy-recent.json       # Ring buffer of recent 200 requests/rotations (0600)
+    └── agy-ui-prefs.json     # User UI preferences (badge auto-refresh, smart mode)
+```
 
-**Second, how fast the cache updates.** DeepSeek refreshes its cache at the
-end of every request — only the newest message misses each round, giving
-near-100%. agy's cache updates lag: this round's additions are not hit in
-the next round — they enter the cache roughly two rounds later, and requests
-for the same content in between all count as misses. Every round wastes
-about 1.5-2× its additions; the long-conversation hit rate keeps rising as
-the context grows, bounded by the model's context window.
+- **Zero Token Leakage**: Statistical and recent-history files store only account emails and model identifiers — never raw tokens, secrets, or project IDs.
 
-**Practical tips**
+---
 
-- Don't expect 99% from agy: the gap comes from upstream mechanics, with no
-  room to optimize.
-- If you have a weird number obsession, stuff some custom content into the
-  System Prompt (MCP / tool definitions / roleplay ...).
+## ⚙️ Risk Controls & Environment Variables
 
-### Storage & secrets
+| Variable | Default | Description |
+|---|---|---|
+| `DSH_AGY_DISABLE=1` | `0` | **Master Kill Switch**: Prevents plugin registration (provider, Settings UI, quota badge) and terminates CLI. |
+| `DSH_AGY_FINGERPRINT_MODE` | `dynamic` | `dynamic`: per-request header randomization.<br>`stable`: fixed client identity per account without header randomization. |
+| `DSH_AGY_MULTIMODAL_MAX_INLINE_MB` | `20` | Max inline file size (MB) for non-image multimodal documents (valid: 1–100). |
+| `DSH_AGY_HEALTH_INTERVAL_MS` | `0` (off) | Background automated health probe interval inside DSH (token refresh + userinfo). |
+| `DSH_AGY_IDLE_TIMEOUT_MS` | `180000` | Silence budget for SSE stream reads (3 minutes). Drops hung connections without interrupting long reasoning pauses. |
+| `AGY_CLIENT_ID`<br>`AGY_CLIENT_SECRET` | *(built-in)* | BYO OAuth App escape hatch to override embedded client credentials. |
 
-All agy data files live in one folder, `~/.dsh/agy/` (relocated wholesale by
-`$DSH_HOME`). Upgrading from ≤0.4 moves the legacy files in `~/.dsh/` there on
-first start — a one-shot atomic rename; if a legacy file reappears next to the
-folder afterwards, an old-version process is still running, and a warning says so.
+---
 
-- Accounts: `~/.dsh/agy/agy-accounts.json` —
-  AES-256-GCM encrypted; the master key lives in `~/.dsh/.credentials.yaml`
-  (`AGY_MASTER_KEY`, 0600). `$DSH_HOME` relocates the whole tree.
-- Fingerprint pools (version strings, SDK clients) are user-overridable via
-  `~/.dsh/agy/agy-fingerprint-data.json` — no code release needed to keep them current.
-- Model visibility: `~/.dsh/agy/agy-models.json` (0600) — the hidden-model blacklist.
-  Holds only the models you switched off, so re-enabling one removes its entry.
-- Multimodal inline cap: `~/.dsh/agy/agy-multimodal.json` (0600) — the per-file inline
-  limit in MB. An absent field means the built-in 20MB default.
-- Usage statistics: `~/.dsh/agy/agy-stats.json` (0600) — cumulative counters plus a
-  rolling 30-day window. Counts are merged under a file lock, so several
-  processes (Desktop, a web-profile server, the CLI) record concurrently without
-  losing each other's data.
-- Recent activity: `~/.dsh/agy/agy-recent.json` (0600) — the last 200 requests and
-  rotations, persisted so the panel survives a restart and shows the other
-  processes' history too (external processes' new records arrive within 30s).
-- None of these files store tokens, proxies, or project ids — account emails
-  only; the tokens live encrypted in the accounts file and the master key in
-  the credentials document.
+## 🗑️ Uninstallation
+
+```sh
+# 1. Remove the plugin from DSH web profile
+dsh plugin --profile web remove dsh-plugin-agy
+
+# 2. Uninstall global CLI if installed
+npm uninstall -g dsh-plugin-agy
+
+# 3. (Optional) Remove local encrypted accounts and data
+rm -rf ~/.dsh/agy
+
+# 4. (Optional) Revoke Google OAuth permissions
+# Navigate to: Google Account Settings → Security → Third-party apps → Revoke "Antigravity"
+```
+
+---
 
 ## ⚠️ Disclaimer
 
-This plugin authenticates with Google's consumer OAuth client that ships with the
-Antigravity desktop product and uses the Antigravity Cloud Code API outside of that
-product. This may violate Antigravity's terms of service. **Use at your own risk** —
-accounts can be rate-limited, throttled, or banned. Multi-account rotation, device
-fingerprinting, and the signature-bypass sentinel are enabled by default and are
-designed to work around upstream limits; you are responsible for how you use them and
-for any account consequences.
+This plugin interfaces with Google's consumer OAuth client and Cloud Code APIs outside of the official Antigravity IDE. This may contravene Google's Terms of Service. **Use at your own risk.** Accounts may experience rate limits, temporary cooldowns, or account restrictions. Multi-account rotation and device fingerprinting are provided for research and workflow continuity; you remain solely responsible for your usage and account security.
 
-## Credits
+---
 
-This project references logic and data from the following MIT-licensed sources:
+## 🤝 Credits & References
 
-| Source | Content |
-|---|---|
-| [opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth) (archived) | OAuth flow shape, account-store schema & versioned migration, 429/backoff concepts, fingerprint design |
-| [antigravity-claude-proxy PR #170](https://github.com/badrisnarayanan/antigravity-claude-proxy/pull/170) | Device fingerprint generation (via opencode-antigravity-auth) |
-| [OmniRoute](https://github.com/diegosouzapw/OmniRoute) | Wire format (envelope, headers, SSE), endpoint order, `agy` token-file parsing, paste-credential blob codec, thoughtSignature replay, 429 category engine |
-| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | Plugin shell, `LlmAdapter` seam, DSH conventions |
+This project is built with gratitude upon the work of the following open-source projects:
 
-## Development
+| Project | License | Heritage & Description |
+|---|:---:|---|
+| [chaos-03x/dsh-agy](https://github.com/chaos-03x/dsh-agy) | **MIT** | **Direct Upstream Origin**: Multi-account pool architecture, DSH Settings client integration, quota management, and CLI suite. |
+| [opencode-antigravity-auth](https://github.com/NoeFabris/opencode-antigravity-auth) | MIT | OAuth flow structure, account store schema, 429 backoff concepts, and fingerprint design. |
+| [antigravity-claude-proxy](https://github.com/badrisnarayanan/antigravity-claude-proxy) | MIT | Device fingerprint generation logic (via opencode-antigravity-auth). |
+| [OmniRoute](https://github.com/diegosouzapw/OmniRoute) | MIT | Wire format, SSE stream handling, credential blob encoding, thoughtSignature replay, and 429 classifier. |
+| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | MIT | Plugin system, `LlmAdapter` abstraction, and web architecture. |
 
-```sh
-pnpm install
-pnpm test                      # vitest, fixture-driven, no network
-pnpm run record:fixtures       # re-record real-API fixtures (needs a real account)
-pnpm run e2e                   # real-account end-to-end (needs AGY_REFRESH_TOKEN)
-pnpm run debug:request         # endpoint/header bisection probe
-pnpm run verify:tools          # live two-turn tool-signature check
-pnpm run verify:proxy-routing  # live per-account proxy routing + fail-closed check
-npm pack --dry-run             # verify the publishable artifact
-```
+---
+
+## 📄 License
+
+This project is licensed under the [MIT License](LICENSE).

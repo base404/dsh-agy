@@ -229,10 +229,23 @@ export function windowForPhase(
 ): '5h' | 'weekly' {
   const has5h = readWindowAt(group, '5h', now) !== null
   const hasWeekly = readWindowAt(group, 'weekly', now) !== null
-  if (windowType === 'both') return phase % 2 === 1 ? 'weekly' : '5h'
-  const likely = windowType === 'weekly' ? hasWeekly : has5h
-  if (likely) return windowType
-  return has5h ? '5h' : 'weekly'
+
+  if (windowType === 'both') {
+    if (has5h && hasWeekly) return phase % 2 === 1 ? 'weekly' : '5h'
+    if (hasWeekly) return 'weekly'
+    return '5h'
+  }
+
+  if (windowType === 'weekly') {
+    if (hasWeekly) return 'weekly'
+    if (has5h) return '5h'
+    return 'weekly'
+  }
+
+  // windowType === '5h'
+  if (has5h) return '5h'
+  if (hasWeekly) return 'weekly'
+  return '5h'
 }
 
 /** The account's `limits` groups, or an empty list. */

@@ -25,7 +25,7 @@ export default defineConfig([
     copy: [{ from: 'client.d.ts', rename: 'client.d.ts' }],
     outputOptions: {
       entryFileNames: 'client.js',
-      banner: 'window.__ModuleLoader__.load({ id: "dsh-agy", factory: (require) => {',
+      banner: 'window.__ModuleLoader__.load({ id: "dsh-plugin-agy", factory: (require) => {',
       intro: 'var module = { exports: {} }; var exports = module.exports;',
       footer: 'return module.exports; } });',
     },

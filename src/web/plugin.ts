@@ -36,7 +36,7 @@ import { isAgyDisabled } from '../runtime/risk.ts'
 import { createAgyManagement } from './management.ts'
 import { renderCallbackHtml } from './page.ts'
 
-export const name = 'dsh-agy-web'
+export const name = 'dsh-plugin-agy-web'
 
 /** The one service every composition provides; the rest are resolved lazily. */
 export const inject = ['llm']

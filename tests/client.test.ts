@@ -288,6 +288,10 @@ describe('settings tab layout', () => {
     expect(functionBody('ConfigTab')).toContain('h(MultimodalCard')
   })
 
+  it('renders a friendly empty state when models filter has no match', () => {
+    expect(functionBody('ModelsTab')).toContain('emptyFilteredModels')
+  })
+
   it('carries the moved card into the tab body chain ahead of the credentials fallback', () => {
     // The body ternary ends in a bare `else` for CredentialsTab, so a new tab
     // that misses its branch renders credentials with no compile error.
@@ -363,6 +367,11 @@ describe('usage table stylesheet', () => {
     const declarations = (rowRule?.[1] ?? '').replace(/\/\*[\s\S]*?\*\//g, '')
     expect(declarations).toMatch(/flex-wrap:\s*wrap/)
     expect(declarations).not.toMatch(/grid-template-columns/)
+  })
+
+  it('provides visual indentation and hairline border for dependent preference subrows', () => {
+    expect(css).toMatch(/\.agy-pref-subrow\s*\{[^}]*margin-left:/)
+    expect(css).toMatch(/\.agy-pref-subrow-nested\s*\{[^}]*margin-left:/)
   })
 })
 

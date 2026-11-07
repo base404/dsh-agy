@@ -13,7 +13,6 @@ import { button, card, hint, stateBadge } from './components.ts'
 import { agoText, formatDetailedReset, stateLabel } from './quota-view.ts'
 import { AccountDetail } from './account-detail.ts'
 import { RecentCard } from './recent-card.ts'
-import { PreferencesCard } from './preferences-card.ts'
 
 /**
  * Whether the row should offer "set as current".
@@ -162,12 +161,5 @@ export function AccountsTab(props: {
             t,
             detailedQuotaReset: props.detailedQuotaReset,
           })),
-    h(RecentCard, { rpc: props.rpc, t }),
-    h(PreferencesCard, {
-      rpc: props.rpc,
-      t,
-      accounts: props.accounts,
-      onBadgePrefChange: props.onBadgePrefChange,
-      onDetailedPrefChange: props.onDetailedPrefChange,
-    })))
+    h(RecentCard, { rpc: props.rpc, t })))
 }

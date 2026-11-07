@@ -166,15 +166,17 @@ describe('rotation groups', () => {
     expect(windowForPhase(gemini, 0, 'both', NOW)).toBe('5h')
     expect(windowForPhase(gemini, 1, 'both', NOW)).toBe('weekly')
     expect(windowForPhase(gemini, 2, 'both', NOW)).toBe('5h')
-    // The Argon group is weekly-only. A PIN to 5h must not strand it on an em
-    // dash, so the pin falls back to the window the group actually reports; the
-    // alternating mode keeps its own parity because the caller reads whichever
-    // window it names.
-    expect(windowForPhase(argon, 0, 'both', NOW)).toBe('5h')
+    // The Argon group is weekly-only. Under 'both' and under pins, it must
+    // always show the window the group actually reports (weekly), rather than
+    // stranding on '5h' where readWindowAt would return null and blank the badge.
+    expect(windowForPhase(argon, 0, 'both', NOW)).toBe('weekly')
+    expect(windowForPhase(argon, 1, 'both', NOW)).toBe('weekly')
     expect(windowForPhase(argon, 0, '5h', NOW)).toBe('weekly')
     expect(windowForPhase(argon, 0, 'weekly', NOW)).toBe('weekly')
-    // A 5h-only group under a weekly pin likewise falls back to what it reports.
+    // A 5h-only group under 'both' or a weekly pin likewise shows 5h.
     const fiveHourOnly = { name: 'g', windows: [window_('g-5h', '5h', 0.5, at(30))] }
+    expect(windowForPhase(fiveHourOnly, 0, 'both', NOW)).toBe('5h')
+    expect(windowForPhase(fiveHourOnly, 1, 'both', NOW)).toBe('5h')
     expect(windowForPhase(fiveHourOnly, 0, 'weekly', NOW)).toBe('5h')
   })
 })

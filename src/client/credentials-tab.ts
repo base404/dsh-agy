@@ -5,7 +5,7 @@
 import { useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { h } from './element.ts'
-import { button, hint, subhead } from './components.ts'
+import { button, card, hint } from './components.ts'
 import type { T } from './types.ts'
 
 export function CredentialsTab(props: {
@@ -22,20 +22,23 @@ export function CredentialsTab(props: {
   )
   const suffix = sources.length > 1 ? ` (${sources.length})` : ''
   return h('div', { className: 'agy-root' },
-    subhead(t('importTitle')),
-    hint(t('importHelp')),
-    h('textarea', {
-      className: 'agy-textarea',
-      style: { marginTop: '8px' },
-      value: text,
-      placeholder: t('importPlaceholder'),
-      onChange: (event: { target: { value: string } }) => { setText(event.target.value) },
-    }),
-    h('div', { className: 'agy-toolbar', style: { marginTop: '8px' } },
-      button(`${t('importJson')}${suffix}`, () => { props.onImport('json', sources) },
-        { disabled: props.busy || sources.length === 0 }),
-      button(`${t('importBlob')}${suffix}`, () => { props.onImport('blob', sources) },
-        { disabled: props.busy || sources.length === 0 }),
-      h('span', { className: 'agy-grow' }),
-      button(t('exportAll'), () => { props.onExportAll() }, { disabled: props.busy })))
+    card(t('importTitle'),
+      h('div', { className: 'agy-credential-box' },
+        hint(t('importHelp')),
+        h('textarea', {
+          className: 'agy-textarea',
+          value: text,
+          placeholder: t('importPlaceholder'),
+          onChange: (event: { target: { value: string } }) => { setText(event.target.value) },
+        }),
+        h('div', { className: 'agy-toolbar' },
+          button(`${t('importJson')}${suffix}`, () => { props.onImport('json', sources) },
+            { disabled: props.busy || sources.length === 0 }),
+          button(`${t('importBlob')}${suffix}`, () => { props.onImport('blob', sources) },
+            { disabled: props.busy || sources.length === 0 })))),
+    card(t('exportTitle'),
+      h('div', { className: 'agy-credential-box' },
+        hint(t('exportHelp')),
+        h('div', { className: 'agy-toolbar' },
+          button(t('exportAll'), () => { props.onExportAll() }, { disabled: props.busy })))))
 }

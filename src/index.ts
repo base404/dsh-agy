@@ -9,7 +9,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import { AGY_PROVIDER, createAgyRuntime } from './plugin-common.ts'
 import { isAgyDisabled } from './runtime/risk.ts'
 
-export const name = 'dsh-agy'
+export const name = 'dsh-plugin-agy'
 
 export const inject = ['llm']
 
